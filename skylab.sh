@@ -161,8 +161,8 @@ source /etc/os-release
 readonly MINIMUM_DISK_SIZE_GB="5"
 readonly MINIMUM_MEMORY="400"
 readonly MINIMUM_DOCKER_VERSION="20"
-readonly SYSTEM_DEPANDS_PACKAGE=('wget' 'curl' 'smartmontools' 'parted' 'ntfs-3g' 'net-tools' 'udevil' 'samba' 'cifs-utils' 'mergerfs' 'unzip' 'screenfetch' 'btop' 'dockage')
-readonly SYSTEM_DEPANDS_COMMAND=('wget' 'curl' 'smartctl' 'parted' 'ntfs-3g' 'netstat' 'udevil' 'smbd' 'mount.cifs' 'mount.mergerfs' 'unzip' 'screenfetch' 'btop' 'dockage')
+readonly SYSTEM_DEPANDS_PACKAGE=('wget' 'curl' 'smartmontools' 'parted' 'ntfs-3g' 'net-tools' 'udevil' 'samba' 'cifs-utils' 'mergerfs' 'unzip' 'screenfetch' 'btop')
+readonly SYSTEM_DEPANDS_COMMAND=('wget' 'curl' 'smartctl' 'parted' 'ntfs-3g' 'netstat' 'udevil' 'smbd' 'mount.cifs' 'mount.mergerfs' 'unzip' 'screenfetch' 'btop')
 
 # SYSTEM INFO
 PHYSICAL_MEMORY=$(LC_ALL=C free -m | awk '/Mem:/ { print $2 }')
@@ -316,11 +316,15 @@ trap 'Handle_Error $LINENO "$BASH_COMMAND"' ERR
 
 # Note: Show function moved to top of file to fix execution order
 
-# Progress Bar Function
+# Enhanced Progress Bar Function with App-level Progress
 Show_Progress() {
     local current=$1
     local total=$2
     local step_name="$3"
+    local app_current=${4:-0}
+    local app_total=${5:-1}
+    local app_name="${6:-}"
+    
     local percentage=$((current * 100 / total))
     local filled=$((current * PROGRESS_WIDTH / total))
     local empty=$((PROGRESS_WIDTH - filled))
@@ -330,7 +334,46 @@ Show_Progress() {
     printf "%*s" $empty | tr ' ' "$PROGRESS_EMPTY"
     printf "] Step %d/%d: %s${colorReset}" $current $total "$step_name"
     
+    # Show app-level progress if provided
+    if [[ $app_total -gt 1 && -n "$app_name" ]]; then
+        local app_percentage=$((app_current * 100 / app_total))
+        printf "\n${colorCyan}    └─ Installing %s (%d/%d) - %d%%${colorReset}" "$app_name" $app_current $app_total $app_percentage
+    fi
+    
     if [[ $current -eq $total ]]; then
+        echo ""
+    fi
+}
+
+# App Installation Progress Tracker
+Show_App_Progress() {
+    local app_name="$1"
+    local current=$2
+    local total=$3
+    local status="$4"  # installing, success, failed
+    
+    local percentage=$((current * 100 / total))
+    local status_icon="⏳"
+    local status_color="$colorYellow"
+    
+    case "$status" in
+        "installing")
+            status_icon="⏳"
+            status_color="$colorYellow"
+            ;;
+        "success")
+            status_icon="✅"
+            status_color="$colorGreen"
+            ;;
+        "failed")
+            status_icon="❌"
+            status_color="$colorRed"
+            ;;
+    esac
+    
+    printf "\r${status_color}${status_icon} [%3d%%] Installing %s...${colorReset}" $percentage "$app_name"
+    
+    if [[ "$status" == "success" || "$status" == "failed" ]]; then
         echo ""
     fi
 }
@@ -1528,38 +1571,58 @@ Check_Disk
 Step_Header 5 "Updating Package Repositories"
 Update_Package_Resource
 
+# Enhanced Installation with App Progress Tracking
+APPS_TO_INSTALL=("Dependencies" "Docker" "System-Config" "Rclone" "LazyDocker" "Watchtower" "Filebrowser" "AdGuard")
+TOTAL_APPS=${#APPS_TO_INSTALL[@]}
+
 # Step 6: Install Dependencies
 Step_Header 6 "Installing System Dependencies"
+Show_App_Progress "System Dependencies" 1 $TOTAL_APPS "installing"
 Install_Depends
 Check_Dependency_Installation
+Show_App_Progress "System Dependencies" 1 $TOTAL_APPS "success"
 
 # Step 7: Install Docker
 Step_Header 7 "Installing Docker Engine"
+Show_App_Progress "Docker Engine" 2 $TOTAL_APPS "installing"
 Check_Docker_Install
+Show_App_Progress "Docker Engine" 2 $TOTAL_APPS "success"
 
 # Step 8: Configuration Addons
 Step_Header 8 "Configuring System Addons"
+Show_App_Progress "System Configuration" 3 $TOTAL_APPS "installing"
 Configuration_Addons
+Show_App_Progress "System Configuration" 3 $TOTAL_APPS "success"
 
 # Step 9: Install Rclone
 Step_Header 9 "Installing Rclone Cloud Storage"
+Show_App_Progress "Rclone" 4 $TOTAL_APPS "installing"
 Install_Rclone
+Show_App_Progress "Rclone" 4 $TOTAL_APPS "success"
 
 # Step 10: Install LazyDocker
 Step_Header 10 "Installing LazyDocker Management UI"
+Show_App_Progress "LazyDocker" 5 $TOTAL_APPS "installing"
 Install_LazyDocker
+Show_App_Progress "LazyDocker" 5 $TOTAL_APPS "success"
 
 # Step 11: Install Watchtower
 Step_Header 11 "Installing Watchtower Auto-Updater"
+Show_App_Progress "Watchtower" 6 $TOTAL_APPS "installing"
 Install_Watchtower
+Show_App_Progress "Watchtower" 6 $TOTAL_APPS "success"
 
 # Step 12: Install Filebrowser
 Step_Header 12 "Installing Filebrowser Web File Manager"
+Show_App_Progress "Filebrowser" 7 $TOTAL_APPS "installing"
 Install_Filebrowser
+Show_App_Progress "Filebrowser" 7 $TOTAL_APPS "success"
 
 # Step 13: Install AdGuard Home
 Step_Header 13 "Installing AdGuard Home (DNS Ad Blocker)"
+Show_App_Progress "AdGuard Home" 8 $TOTAL_APPS "installing"
 Install_AdGuard
+Show_App_Progress "AdGuard Home" 8 $TOTAL_APPS "success"
 
 # Step 14: Final System Health Check
 Step_Header 14 "Performing Final System Health Check"

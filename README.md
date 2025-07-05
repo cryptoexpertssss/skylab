@@ -20,6 +20,20 @@ SkyLab is an enhanced version of the original CasaOS installer, evolved into a c
 
 ## 🎯 Overview
 
+## 🚀 Features
+
+- **🐳 Docker Integration**: Automated Docker and Docker Compose setup
+- **📦 Service Profiles**: Modular deployment with core, proxy, monitoring, DNS, and dashboard profiles
+- **🔧 Auto-configuration**: Intelligent system detection and configuration
+- **📊 Health Monitoring**: Built-in system health checks and monitoring
+- **🔄 Auto-updates**: Watchtower integration for automatic container updates
+- **🌐 Web Management**: Multiple web-based management interfaces
+- **🛡️ Security**: Built-in DNS ad-blocking and VPN capabilities
+- **📱 Mobile-friendly**: Responsive web interfaces for mobile management
+- **📈 Enhanced Progress Tracking**: Real-time progress bars for individual app installations
+- **🔍 Service Verification**: Comprehensive health checks and service status verification
+- **📋 Detailed Logging**: Enhanced logging system with structured log files
+
 SkyLab is a Docker Compose-based home lab stack that provides:
 
 - **File Management**: Web-based file browser with secure access
@@ -219,6 +233,8 @@ Deploys all available services
 # Monitoring
 ./skylab-stack.sh status                   # Show service status and URLs
 ./skylab-stack.sh logs [service] [lines]   # Show logs
+./skylab-stack.sh verify                   # Comprehensive service verification
+./skylab-stack.sh health                   # System health check (alias for verify)
 
 # Maintenance
 ./skylab-stack.sh backup                   # Create configuration backup
@@ -251,6 +267,37 @@ After deployment, services are accessible at:
 | **Uptime Kuma** | `http://your-ip:3001` | (setup required) |
 | **Pi-hole** | `http://your-ip:8053/admin` | admin / (from .env) |
 | **Heimdall** | `http://your-ip:8090` | - |
+
+## 🔍 Service Verification
+
+SkyLab includes a comprehensive verification system to ensure all services are properly installed and functioning:
+
+### Quick Health Check
+```bash
+./skylab-stack.sh verify
+# or
+./skylab-stack.sh health
+```
+
+### What Gets Verified
+- **System Dependencies**: Docker, Docker Compose, curl, wget, rclone, lazydocker
+- **Docker System**: Daemon status, version compatibility, network configuration
+- **Container Services**: Running status, port bindings, health endpoints, error logs
+- **System Resources**: Memory usage, disk space, CPU load, container count
+
+### Verification Features
+- ✅ **Real-time Status**: Live checking of service health and availability
+- 📊 **Resource Monitoring**: System resource usage and performance metrics
+- 🔗 **Connectivity Tests**: HTTP endpoint testing for web services
+- 📝 **Detailed Logging**: Comprehensive logs saved to `/var/log/skylab/verify-*.log`
+- 📈 **Summary Reports**: Color-coded results with pass/fail/warning counts
+
+### Enhanced Progress Tracking
+During installation, SkyLab now shows:
+- **Overall Progress**: Step-by-step installation progress (1/14, 2/14, etc.)
+- **App-level Progress**: Individual application installation status with percentages
+- **Real-time Status**: Live updates with success/failure indicators
+- **Visual Indicators**: Color-coded progress bars and status icons
 
 ## 💾 Backup & Restore
 

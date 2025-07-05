@@ -355,6 +355,8 @@ show_help() {
     echo -e "  ${colorGreen}update${colorReset}                   Update all services to latest images"
     echo -e "  ${colorGreen}status${colorReset}                   Show service status and URLs"
     echo -e "  ${colorGreen}logs${colorReset} [service] [lines]   Show logs (default: all services, 50 lines)"
+    echo -e "  ${colorGreen}verify${colorReset}                   Comprehensive service verification"
+    echo -e "  ${colorGreen}health${colorReset}                   Alias for verify - check system health"
     echo -e "  ${colorGreen}backup${colorReset}                   Create configuration backup"
     echo -e "  ${colorGreen}help${colorReset}                     Show this help message\n"
     
@@ -375,6 +377,18 @@ show_help() {
     echo -e "${colorBold}Configuration:${colorReset}"
     echo -e "  Edit ${colorYellow}.env${colorReset} file to customize settings"
     echo -e "  Edit ${colorYellow}docker-compose.yml${colorReset} to modify services\n"
+}
+
+# Service verification function
+verify_services() {
+    Show 2 "Running comprehensive service verification..."
+    
+    if [[ -f "./skylab-verify.sh" ]]; then
+        bash ./skylab-verify.sh
+    else
+        Show 1 "Verification script not found. Please ensure skylab-verify.sh exists."
+        exit 1
+    fi
 }
 
 # Main execution
@@ -419,6 +433,12 @@ main() {
         "backup")
             show_banner
             backup_config
+            ;;
+        "verify")
+            verify_services
+            ;;
+        "health")
+            verify_services
             ;;
         "help"|"--help"|"")
             show_banner
