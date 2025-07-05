@@ -1431,6 +1431,7 @@ Install_AdGuard() {
     else
         # Create directories with proper permissions
         Show 4 "Creating AdGuard Home directories..."
+        ${sudo_cmd} mkdir -p /opt/adguard
         ${sudo_cmd} mkdir -p "$adguard_data_dir"
         ${sudo_cmd} mkdir -p "$adguard_config_dir"
         ${sudo_cmd} mkdir -p "$adguard_work_dir"
