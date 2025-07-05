@@ -324,15 +324,25 @@ Show_Progress() {
     local app_current=${4:-0}
     local app_total=${5:-1}
     local app_name="${6:-}"
+    local real_time=${7:-false}
     
     local percentage=$((current * 100 / total))
     local filled=$((current * PROGRESS_WIDTH / total))
     local empty=$((PROGRESS_WIDTH - filled))
     
-    printf "\r${colorBold}[%s] %3d%% [" "$SCRIPT_NAME"
-    printf "%*s" $filled | tr ' ' "$PROGRESS_CHAR"
-    printf "%*s" $empty | tr ' ' "$PROGRESS_EMPTY"
-    printf "] Step %d/%d: %s${colorReset}" $current $total "$step_name"
+    if [[ "$real_time" == "true" ]]; then
+        printf "\r${colorBold}[%s] %3d%% [" "$SCRIPT_NAME"
+        printf "%*s" $filled | tr ' ' "$PROGRESS_CHAR"
+        printf "%*s" $empty | tr ' ' "$PROGRESS_EMPTY"
+        printf "] Step %d/%d: %s${colorReset}" $current $total "$step_name"
+        # Flush output for real-time display
+        printf "" && sleep 0.1
+    else
+        printf "\r${colorBold}[%s] %3d%% [" "$SCRIPT_NAME"
+        printf "%*s" $filled | tr ' ' "$PROGRESS_CHAR"
+        printf "%*s" $empty | tr ' ' "$PROGRESS_EMPTY"
+        printf "] Step %d/%d: %s${colorReset}" $current $total "$step_name"
+    fi
     
     # Show app-level progress if provided
     if [[ $app_total -gt 1 && -n "$app_name" ]]; then
@@ -727,14 +737,24 @@ Install_Depends() {
     local installed_packages=()
     local skipped_packages=()
     
+    local total_packages=${#SYSTEM_DEPANDS_COMMAND[@]}
+    
     for ((i = 0; i < ${#SYSTEM_DEPANDS_COMMAND[@]}; i++)); do
         cmd=${SYSTEM_DEPANDS_COMMAND[i]}
         packagesNeeded=${SYSTEM_DEPANDS_PACKAGE[i]}
+        
+        # Update progress for current package
+        local current_progress=$((i + 1))
+        Show_App_Progress "$packagesNeeded" $current_progress $total_packages "installing"
+        
+        # Show real-time progress during installation
+        Show_Progress $current_progress $total_packages "Installing $packagesNeeded" 0 1 "" true
         
         # Check if command already exists
         if [[ -x $(${sudo_cmd} which "$cmd" 2>/dev/null) ]]; then
             Show 5 "Command '$cmd' already available, skipping $packagesNeeded"
             skipped_packages+=("$packagesNeeded")
+            Show_App_Progress "$packagesNeeded" $current_progress $total_packages "success"
             continue
         fi
         
@@ -748,8 +768,13 @@ Install_Depends() {
         while [[ $retry_count -lt $max_retries && $install_success == false ]]; do
             if [[ $retry_count -gt 0 ]]; then
                 Show 2 "Retrying installation of $packagesNeeded (attempt $((retry_count + 1))/$max_retries)..."
+                # Update progress for retry attempt
+                Show_Progress $current_progress $total_packages "Retrying $packagesNeeded (attempt $((retry_count + 1))/$max_retries)" 0 1 "" true
                 sleep 3
             fi
+            
+            # Show installation attempt progress
+            Show_Progress $current_progress $total_packages "Installing $packagesNeeded..." 0 1 "" true
             
             GreyStart
             
@@ -796,10 +821,16 @@ Install_Depends() {
             Show 0 "Successfully installed: $packagesNeeded"
             Log_Message "SUCCESS" "Package installed successfully: $packagesNeeded"
             installed_packages+=("$packagesNeeded")
+            Show_App_Progress "$packagesNeeded" $current_progress $total_packages "success"
+            # Show real-time success progress
+            Show_Progress $current_progress $total_packages "Successfully installed $packagesNeeded" 0 1 "" true
         else
             Show 1 "Failed to install: $packagesNeeded after $max_retries attempts"
             Log_Message "ERROR" "Package installation failed: $packagesNeeded"
             failed_packages+=("$packagesNeeded")
+            Show_App_Progress "$packagesNeeded" $current_progress $total_packages "failed"
+            # Show real-time failure progress
+            Show_Progress $current_progress $total_packages "Failed to install $packagesNeeded" 0 1 "" true
         fi
     done
     
@@ -1549,14 +1580,19 @@ echo -e "${GREEN_LINE}"
 
 # Step 1: Get Download URL Domain
 Step_Header 1 "Configuring Download Sources"
+Show_Progress 1 $TOTAL_STEPS "Configuring Download Sources" 0 1 "" true
 Get_Download_Url_Domain
+Show_Progress 1 $TOTAL_STEPS "Download Sources Configured" 0 1 "" true
 
 # Step 2: Check Architecture
 Step_Header 2 "Validating System Architecture"
+Show_Progress 2 $TOTAL_STEPS "Validating System Architecture" 0 1 "" true
 Check_Arch
+Show_Progress 2 $TOTAL_STEPS "System Architecture Validated" 0 1 "" true
 
 # Step 3: Check OS and Distribution
 Step_Header 3 "Detecting Operating System"
+Show_Progress 3 $TOTAL_STEPS "Detecting Operating System" 0 1 "" true
 Check_OS
 Check_Distribution
 
