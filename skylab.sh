@@ -1673,7 +1673,7 @@ Completion_Banner() {
     echo -e "   ${colorBlue}1.${colorReset} Access SkyLab Dashboard: ${colorDim}http://localhost:8888${colorReset}"
     echo -e "   ${colorBlue}2.${colorReset} Access Filebrowser: ${colorDim}http://localhost:8080 (admin/admin)${colorReset}"
     echo -e "   ${colorBlue}3.${colorReset} Access AdGuard Home: ${colorDim}http://localhost:3000${colorReset}"
-    echo -e "   ${colorBlue}4.${colorReset} Configure DNS settings: ${colorDim}Point devices to this server's IP:53${colorReset}"
+    echo -e "   ${colorBlue}4.${colorReset} Configure DNS settings: ${colorDim}Point devices to this server's IP:5353${colorReset}"
     echo -e "   ${colorBlue}5.${colorReset} Start LazyDocker: ${colorDim}lazydocker${colorReset}"
     echo -e "   ${colorBlue}6.${colorReset} Check Docker status: ${colorDim}docker ps${colorReset}"
     

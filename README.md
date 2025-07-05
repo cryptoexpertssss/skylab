@@ -52,7 +52,7 @@ SkyLab is a Docker Compose-based home lab stack that provides:
 | Service | Description | Default Port | Container |
 |---------|-------------|--------------|----------|
 | **Filebrowser** | Web-based file manager | 8080 | `filebrowser/filebrowser` |
-| **AdGuard Home** | DNS Ad Blocker & Privacy Protection | 3000, 53 | `adguard/adguardhome` |
+| **AdGuard Home** | DNS Ad Blocker & Privacy Protection | 3000, 5353 | `adguard/adguardhome` |
 | **SkyLab Homepage** | Homelab dashboard with hacker vibes | 8888 | `nginx:alpine` |
 | **Watchtower** | Automatic container updates | - | `containrrr/watchtower` |
 | **Portainer** | Docker management UI | 9000 | `portainer/portainer-ce` |
@@ -407,14 +407,24 @@ docker-compose up -d
 # Check AdGuard logs
 docker logs adguard
 
-# Verify DNS ports
-sudo ufw allow 53/tcp
-sudo ufw allow 53/udp
+# Verify DNS ports (AdGuard uses 5353 by default to avoid conflicts)
+sudo ufw allow 5353/tcp
+sudo ufw allow 5353/udp
 sudo ufw allow 3000/tcp
 
 # Test DNS resolution
 nslookup google.com localhost
+
+# If port 53 conflict occurs, AdGuard is configured to use port 5353
+# Configure your devices to use your-server-ip:5353 as DNS server
 ```
+
+#### Port 53 Already in Use
+If you encounter "address already in use" for port 53:
+- **Windows**: Windows DNS Client service uses port 53
+- **Linux**: systemd-resolved or other DNS services may use port 53
+- **Solution**: SkyLab configures AdGuard to use port 5353 by default
+- **Configuration**: Set `ADGUARD_DNS_PORT=5353` in `skylab.conf`
 
 ### Log Locations
 
