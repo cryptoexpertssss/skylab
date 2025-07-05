@@ -97,8 +97,8 @@ The homepage includes quick access to these SkyLab services:
 | Portainer | 9000 | Docker management |
 | Nginx Proxy Manager | 81 | Reverse proxy management |
 | Uptime Kuma | 3001 | Service monitoring |
-| Pi-hole | 8081 | Network ad blocking |
-| Heimdall | 8082 | Application dashboard |
+| Pi-hole | 8053 | Network ad blocking |
+| Heimdall | 8090 | Application dashboard |
 | Watchtower | - | Automatic updates (background) |
 
 ## Integration with SkyLab
