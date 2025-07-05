@@ -1104,7 +1104,9 @@ Install_rclone_from_source() {
     Show 4 "Using optimized download source for your region..."
     sed -i 's/downloads.rclone.org/get.homelabos.io/g' ./install.sh
   else
-    sed -i 's/downloads.rclone.org/get.homelabos.io/g' ./install.sh
+    Show 4 "Using standard download source..."
+    # Keep original download source for better reliability
+    # sed -i 's/downloads.rclone.org/get.homelabos.io/g' ./install.sh
   fi
   
   ${sudo_cmd} chmod +x ./install.sh
@@ -1124,12 +1126,22 @@ Install_rclone_from_source() {
   
   # Check if the installation was successful
   wait $pid
-  if [ $? -ne 0 ]; then
-    Show 1 "Rclone installation failed. See details below:"
+  local exit_code=$?
+  if [ $exit_code -ne 0 ]; then
+    Show 1 "Rclone installation failed with exit code $exit_code. See details below:"
     cat "$temp_file"
-    ${sudo_cmd} rm -rf install.sh
-    rm -f "$temp_file"
-    exit 1
+    
+    # Try fallback installation method
+    Show 3 "Attempting fallback installation method..."
+    if Install_rclone_fallback; then
+      Show 0 "Rclone installed successfully using fallback method."
+    else
+      ${sudo_cmd} rm -rf install.sh
+      rm -f "$temp_file"
+      Show 1 "Both primary and fallback Rclone installation methods failed."
+      Show 3 "You can manually install Rclone later using: curl https://rclone.org/install.sh | sudo bash"
+      return 1
+    fi
   fi
   
   rm -f "$temp_file"
@@ -1138,6 +1150,78 @@ Install_rclone_from_source() {
   cd - >/dev/null
   rm -rf "$temp_dir"
   Show 0 "Rclone v1.61.1 installed successfully."
+}
+
+# Fallback Rclone installation method
+Install_rclone_fallback() {
+  Show 4 "Trying alternative Rclone installation method..."
+  
+  # Try direct download and installation
+  local arch="$(uname -m)"
+  local os="linux"
+  local rclone_version="v1.61.1"
+  
+  case "$arch" in
+    x86_64) arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    armv7l) arch="arm" ;;
+    *) 
+      Show 1 "Unsupported architecture: $arch"
+      return 1
+      ;;
+  esac
+  
+  local download_url="https://downloads.rclone.org/${rclone_version}/rclone-${rclone_version}-${os}-${arch}.zip"
+  local temp_dir=$(mktemp -d)
+  
+  Show 4 "Downloading Rclone ${rclone_version} for ${os}-${arch}..."
+  
+  cd "$temp_dir" || return 1
+  
+  if ${sudo_cmd} wget -q "$download_url" -O rclone.zip; then
+    Show 4 "Extracting Rclone..."
+    if ${sudo_cmd} unzip -q rclone.zip; then
+      local rclone_dir="rclone-${rclone_version}-${os}-${arch}"
+      if [[ -d "$rclone_dir" ]]; then
+        Show 4 "Installing Rclone binary..."
+        ${sudo_cmd} cp "$rclone_dir/rclone" /usr/local/bin/
+        ${sudo_cmd} chmod +x /usr/local/bin/rclone
+        
+        # Install man page if available
+        if [[ -f "$rclone_dir/rclone.1" ]]; then
+          ${sudo_cmd} mkdir -p /usr/local/share/man/man1
+          ${sudo_cmd} cp "$rclone_dir/rclone.1" /usr/local/share/man/man1/
+        fi
+        
+        cd - >/dev/null
+        rm -rf "$temp_dir"
+        
+        # Verify installation
+        if command -v rclone >/dev/null 2>&1; then
+          Show 0 "Rclone fallback installation completed successfully."
+          return 0
+        else
+          Show 1 "Rclone binary installed but not found in PATH."
+          return 1
+        fi
+      else
+        Show 1 "Rclone extraction directory not found."
+        cd - >/dev/null
+        rm -rf "$temp_dir"
+        return 1
+      fi
+    else
+      Show 1 "Failed to extract Rclone archive."
+      cd - >/dev/null
+      rm -rf "$temp_dir"
+      return 1
+    fi
+  else
+    Show 1 "Failed to download Rclone from fallback source."
+    cd - >/dev/null
+    rm -rf "$temp_dir"
+    return 1
+  fi
 }
 
 Install_Rclone() {
@@ -1153,13 +1237,19 @@ Install_Rclone() {
       if [[ -f "$rclone1" ]]; then
         ${sudo_cmd} rm -rf "$rclone1"
       fi
-      Install_rclone_from_source
+      if ! Install_rclone_from_source; then
+        Show 3 "Rclone installation failed, but continuing with setup..."
+        return 1
+      fi
     else
       Show 0 "Rclone $target_version already installed."
     fi
   else
     Show 4 "Rclone not found, installing..."
-    Install_rclone_from_source
+    if ! Install_rclone_from_source; then
+      Show 3 "Rclone installation failed, but continuing with setup..."
+      return 1
+    fi
   fi
   
   # Enable Rclone service if available
@@ -1633,8 +1723,12 @@ Show_App_Progress "System Configuration" 3 $TOTAL_APPS "success"
 # Step 9: Install Rclone
 Step_Header 9 "Installing Rclone Cloud Storage"
 Show_App_Progress "Rclone" 4 $TOTAL_APPS "installing"
-Install_Rclone
-Show_App_Progress "Rclone" 4 $TOTAL_APPS "success"
+if Install_Rclone; then
+  Show_App_Progress "Rclone" 4 $TOTAL_APPS "success"
+else
+  Show_App_Progress "Rclone" 4 $TOTAL_APPS "failed"
+  Show 3 "Rclone installation failed, but continuing with other components..."
+fi
 
 # Step 10: Install LazyDocker
 Step_Header 10 "Installing LazyDocker Management UI"
