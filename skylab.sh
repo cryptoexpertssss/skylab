@@ -115,8 +115,8 @@ source /etc/os-release
 readonly MINIMUM_DISK_SIZE_GB="5"
 readonly MINIMUM_MEMORY="400"
 readonly MINIMUM_DOCKER_VERSION="20"
-readonly SYSTEM_DEPANDS_PACKAGE=('wget' 'curl' 'smartmontools' 'parted' 'ntfs-3g' 'net-tools' 'udevil' 'samba' 'cifs-utils' 'mergerfs' 'unzip')
-readonly SYSTEM_DEPANDS_COMMAND=('wget' 'curl' 'smartctl' 'parted' 'ntfs-3g' 'netstat' 'udevil' 'smbd' 'mount.cifs' 'mount.mergerfs' 'unzip')
+readonly SYSTEM_DEPANDS_PACKAGE=('wget' 'curl' 'smartmontools' 'parted' 'ntfs-3g' 'net-tools' 'udevil' 'samba' 'cifs-utils' 'mergerfs' 'unzip' 'screenfetch' 'btop' 'dockage')
+readonly SYSTEM_DEPANDS_COMMAND=('wget' 'curl' 'smartctl' 'parted' 'ntfs-3g' 'netstat' 'udevil' 'smbd' 'mount.cifs' 'mount.mergerfs' 'unzip' 'screenfetch' 'btop' 'dockage')
 
 # SYSTEM INFO
 PHYSICAL_MEMORY=$(LC_ALL=C free -m | awk '/Mem:/ { print $2 }')
@@ -1253,91 +1253,85 @@ Install_Filebrowser() {
 }
 
 # Install PiVPN (Containerized OpenVPN Server)
-Install_PiVPN() {
-    Show 2 "Setting up PiVPN (Containerized OpenVPN Server)..."
+Install_AdGuard() {
+    Show 2 "Setting up AdGuard Home (DNS Ad Blocker)..."
+    
+    # Load configuration values with defaults
+    local adguard_port=${ADGUARD_PORT:-3000}
+    local adguard_dns_port=${ADGUARD_DNS_PORT:-53}
+    local adguard_data_dir=${ADGUARD_DATA_DIR:-/opt/adguard/data}
+    local adguard_config_dir=${ADGUARD_CONFIG_DIR:-/opt/adguard/config}
+    local adguard_work_dir=${ADGUARD_WORK_DIR:-/opt/adguard/work}
+    local adguard_version=${ADGUARD_VERSION:-latest}
     
     # Check if container already exists
-    if ${sudo_cmd} docker ps -a --format "table {{.Names}}" | grep -q "pivpn"; then
-        Show 2 "PiVPN container already exists."
+    if ${sudo_cmd} docker ps -a --format "table {{.Names}}" | grep -q "adguard"; then
+        Show 2 "AdGuard Home container already exists."
         
         # Check if it's running
-        if ! ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "pivpn"; then
-            Show 3 "PiVPN container exists but is not running. Starting it..."
-            ${sudo_cmd} docker start pivpn
-            Show 0 "PiVPN container started."
+        if ! ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "adguard"; then
+            Show 3 "AdGuard Home container exists but is not running. Starting it..."
+            ${sudo_cmd} docker start adguard
+            Show 0 "AdGuard Home container started."
         fi
     else
         # Create directories with proper permissions
-        Show 4 "Creating PiVPN directories..."
-        ${sudo_cmd} mkdir -p /opt/pivpn/config
-        ${sudo_cmd} mkdir -p /opt/pivpn/clients
-        ${sudo_cmd} chmod 755 /opt/pivpn
-        ${sudo_cmd} chmod 755 /opt/pivpn/config
-        ${sudo_cmd} chmod 755 /opt/pivpn/clients
+        Show 4 "Creating AdGuard Home directories..."
+        ${sudo_cmd} mkdir -p "$adguard_data_dir"
+        ${sudo_cmd} mkdir -p "$adguard_config_dir"
+        ${sudo_cmd} mkdir -p "$adguard_work_dir"
+        ${sudo_cmd} chmod 755 /opt/adguard
+        ${sudo_cmd} chmod 755 "$adguard_data_dir"
+        ${sudo_cmd} chmod 755 "$adguard_config_dir"
+        ${sudo_cmd} chmod 755 "$adguard_work_dir"
         
         # Set ownership if not root
         if [[ $EUID -ne 0 ]] && [[ -n "$SUDO_USER" ]]; then
-            ${sudo_cmd} chown -R "$SUDO_USER:$SUDO_USER" /opt/pivpn 2>/dev/null || {
-                Show 3 "Could not change ownership of /opt/pivpn to $SUDO_USER"
+            ${sudo_cmd} chown -R "$SUDO_USER:$SUDO_USER" /opt/adguard 2>/dev/null || {
+                Show 3 "Could not change ownership of /opt/adguard to $SUDO_USER"
             }
         fi
         
-        # Get the server's public IP (fallback to local IP if detection fails)
-        Show 4 "Detecting server IP address..."
-        SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || hostname -I | awk '{print $1}')
-        
-        if [[ -z "$SERVER_IP" ]]; then
-            Show 3 "Could not detect public IP. Using local IP address."
-            SERVER_IP=$(hostname -I | awk '{print $1}')
-        fi
-        
-        Show 2 "Using server IP: $SERVER_IP"
-        
-        # Pull and run PiVPN container
-        Show 4 "Pulling OpenVPN image..."
-        ${sudo_cmd} docker pull dperson/openvpn > /dev/null 2>&1 &
+        # Pull and run AdGuard Home container
+        Show 4 "Pulling AdGuard Home image..."
+        ${sudo_cmd} docker pull adguard/adguardhome:$adguard_version > /dev/null 2>&1 &
         local pull_pid=$!
-        Spinner $pull_pid "Downloading OpenVPN container image..."
+        Spinner $pull_pid "Downloading AdGuard Home container image..."
         wait $pull_pid
         
-        Show 4 "Creating and starting PiVPN container..."
+        Show 4 "Creating and starting AdGuard Home container..."
         ${sudo_cmd} docker run -d \
-            --name pivpn \
+            --name adguard \
             --restart unless-stopped \
-            --cap-add=NET_ADMIN \
-            --device /dev/net/tun \
-            -p 1194:1194/udp \
-            -p 8443:8080/tcp \
-            -v /opt/pivpn/config:/etc/openvpn \
-            -e "OPENVPN_OPTS=--config /etc/openvpn/server.conf" \
-            -e "SERVER_NAME=$SERVER_IP" \
-            dperson/openvpn -s "$SERVER_IP/24" -r "8.8.8.8" -r "8.8.4.4" || {
-            Show 1 "PiVPN installation failed, please try again."
+            -p $adguard_port:3000/tcp \
+            -p $adguard_dns_port:53/tcp \
+            -p $adguard_dns_port:53/udp \
+            -v "$adguard_config_dir:/opt/adguardhome/conf" \
+            -v "$adguard_work_dir:/opt/adguardhome/work" \
+            adguard/adguardhome:$adguard_version || {
+            Show 1 "AdGuard Home installation failed, please try again."
             exit 1
         }
         
         # Wait for container to initialize
-        Show 4 "Waiting for PiVPN to initialize..."
-        sleep 10
+        Show 4 "Waiting for AdGuard Home to initialize..."
+        sleep 15
         
         # Verify installation
-        if ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "pivpn"; then
-            Show 0 "PiVPN installed and running successfully."
+        if ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "adguard"; then
+            Show 0 "AdGuard Home installed and running successfully."
             
-            # Generate a default client certificate
-            Show 4 "Generating default client certificate..."
-            ${sudo_cmd} docker exec pivpn ovpn_genconfig -u udp://$SERVER_IP 2>/dev/null || true
-            ${sudo_cmd} docker exec pivpn ovpn_initpki nopass 2>/dev/null || true
-            ${sudo_cmd} docker exec pivpn easyrsa build-client-full client1 nopass 2>/dev/null || true
-            ${sudo_cmd} docker exec pivpn ovpn_getclient client1 > /opt/pivpn/clients/client1.ovpn 2>/dev/null || true
-            
-            if [[ -f "/opt/pivpn/clients/client1.ovpn" ]]; then
-                Show 0 "Default client certificate generated: /opt/pivpn/clients/client1.ovpn"
-            else
-                Show 3 "Client certificate generation may have failed. You can generate it manually later."
+            # Get server IP for setup instructions
+            local server_ip=$(curl -s ifconfig.me 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || hostname -I | awk '{print $1}')
+            if [[ -z "$server_ip" ]]; then
+                server_ip=$(hostname -I | awk '{print $1}')
             fi
+            
+            Show 2 "AdGuard Home web interface available at: http://$server_ip:$adguard_port"
+            Show 2 "DNS server configured on port: $adguard_dns_port"
+            Show 3 "Complete the initial setup through the web interface."
         else
-            Show 1 "PiVPN container created but failed to start."
+            Show 1 "AdGuard Home container created but failed to start."
             exit 1
         fi
     fi
@@ -1428,12 +1422,12 @@ Completion_Banner() {
     echo -e "   ${colorGreen}•${colorReset} LazyDocker ${colorDim}(Terminal UI for Docker)${colorReset}"
     echo -e "   ${colorGreen}•${colorReset} Watchtower ${colorDim}(Automatic container updates)${colorReset}"
     echo -e "   ${colorGreen}•${colorReset} Filebrowser ${colorDim}(Web-based file management)${colorReset}"
-    echo -e "   ${colorGreen}•${colorReset} PiVPN ${colorDim}(Containerized OpenVPN server)${colorReset}"
+    echo -e "   ${colorGreen}•${colorReset} AdGuard Home ${colorDim}(DNS Ad Blocker)${colorReset}"
     
     echo -e "\n${colorBold}${colorYellow}🚀 NEXT STEPS:${colorReset}"
     echo -e "   ${colorBlue}1.${colorReset} Access Filebrowser: ${colorDim}http://localhost:8080 (admin/admin)${colorReset}"
-    echo -e "   ${colorBlue}2.${colorReset} Access PiVPN Admin: ${colorDim}http://localhost:8443${colorReset}"
-    echo -e "   ${colorBlue}3.${colorReset} Download VPN client config: ${colorDim}/opt/pivpn/clients/client1.ovpn${colorReset}"
+    echo -e "   ${colorBlue}2.${colorReset} Access AdGuard Home: ${colorDim}http://localhost:3000${colorReset}"
+    echo -e "   ${colorBlue}3.${colorReset} Configure DNS settings: ${colorDim}Point devices to this server's IP:53${colorReset}"
     echo -e "   ${colorBlue}4.${colorReset} Start LazyDocker: ${colorDim}lazydocker${colorReset}"
     echo -e "   ${colorBlue}5.${colorReset} Check Docker status: ${colorDim}docker ps${colorReset}"
     
@@ -1443,8 +1437,8 @@ Completion_Banner() {
     echo -e "   ${colorGreen}•${colorReset} ${colorDim}lazydocker${colorReset} - Open the Docker management UI"
     echo -e "   ${colorGreen}•${colorReset} ${colorDim}rclone config${colorReset} - Configure cloud storage connections"
     echo -e "   ${colorGreen}•${colorReset} ${colorDim}http://localhost:8080${colorReset} - Access Filebrowser web interface"
-    echo -e "   ${colorGreen}•${colorReset} ${colorDim}docker exec pivpn ovpn_getclient <clientname>${colorReset} - Generate VPN client config"
-    echo -e "   ${colorGreen}•${colorReset} ${colorDim}docker logs pivpn${colorReset} - View PiVPN logs"
+    echo -e "   ${colorGreen}•${colorReset} ${colorDim}docker logs adguard${colorReset} - View AdGuard Home logs"
+    echo -e "   ${colorGreen}•${colorReset} ${colorDim}http://localhost:3000${colorReset} - Access AdGuard Home web interface"
     
     echo -e "\n${colorBold}${colorGreen}💖 Thank you for using SkyLab! ${colorReset}${colorDim}(v$SCRIPT_VERSION)${colorReset}"
     echo -e "${colorDim}For issues and feedback: https://github.com/yourusername/skylab${colorReset}"
@@ -1575,9 +1569,9 @@ Install_Watchtower
 Step_Header 12 "Installing Filebrowser Web File Manager"
 Install_Filebrowser
 
-# Step 13: Install PiVPN
-Step_Header 13 "Installing PiVPN (Containerized OpenVPN Server)"
-Install_PiVPN
+# Step 13: Install AdGuard Home
+Step_Header 13 "Installing AdGuard Home (DNS Ad Blocker)"
+Install_AdGuard
 
 # Step 14: Final System Health Check
 Step_Header 14 "Performing Final System Health Check"

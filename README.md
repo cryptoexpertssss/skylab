@@ -38,7 +38,7 @@ SkyLab is a Docker Compose-based home lab stack that provides:
 | Service | Description | Default Port | Container |
 |---------|-------------|--------------|----------|
 | **Filebrowser** | Web-based file manager | 8080 | `filebrowser/filebrowser` |
-| **PiVPN** | OpenVPN server | 1194/UDP, 8443 | `dperson/openvpn` |
+| **AdGuard Home** | DNS Ad Blocker & Privacy Protection | 3000, 53 | `adguard/adguardhome` |
 | **Watchtower** | Automatic container updates | - | `containrrr/watchtower` |
 | **Portainer** | Docker management UI | 9000 | `portainer/portainer-ce` |
 
@@ -169,7 +169,7 @@ SkyLab uses Docker Compose profiles to organize services:
 ```bash
 ./skylab-stack.sh deploy core
 ```
-Includes: Filebrowser, PiVPN, Watchtower, Portainer
+Includes: Filebrowser, AdGuard Home, Watchtower, Portainer
 
 ### Proxy Profile
 ```bash
@@ -227,12 +227,10 @@ Deploys all available services
 ### Individual Service Management
 
 ```bash
-# PiVPN Management
-./pivpn-manager.sh status                  # Check VPN status
-./pivpn-manager.sh add-client <name>       # Add VPN client
-./pivpn-manager.sh list-clients            # List VPN clients
-./pivpn-manager.sh remove-client <name>    # Remove VPN client
-./pivpn-manager.sh logs                    # Show VPN logs
+# AdGuard Home Management
+docker logs adguard                       # Check AdGuard logs
+docker restart adguard                     # Restart AdGuard Home
+docker exec -it adguard /bin/sh           # Access AdGuard container
 
 # Docker Compose Commands
 docker-compose ps                          # List running services
@@ -247,7 +245,7 @@ After deployment, services are accessible at:
 | Service | URL | Default Credentials |
 |---------|-----|--------------------|
 | **Filebrowser** | `http://your-ip:8080` | admin / (generated) |
-| **PiVPN Admin** | `http://your-ip:8443` | - |
+| **AdGuard Home** | `http://your-ip:3000` | (setup required) |
 | **Portainer** | `http://your-ip:9000` | (setup required) |
 | **Nginx Proxy Manager** | `http://your-ip:81` | admin@example.com / changeme |
 | **Uptime Kuma** | `http://your-ip:3001` | (setup required) |
@@ -324,16 +322,18 @@ docker network prune
 docker-compose up -d
 ```
 
-#### VPN Connection Issues
+#### DNS/AdGuard Issues
 ```bash
-# Check VPN logs
-./pivpn-manager.sh logs
+# Check AdGuard logs
+docker logs adguard
 
-# Verify port forwarding
-sudo ufw allow 1194/udp
+# Verify DNS ports
+sudo ufw allow 53/tcp
+sudo ufw allow 53/udp
+sudo ufw allow 3000/tcp
 
-# Check client configuration
-./pivpn-manager.sh list-clients
+# Test DNS resolution
+nslookup google.com localhost
 ```
 
 ### Log Locations
