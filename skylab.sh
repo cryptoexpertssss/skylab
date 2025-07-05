@@ -18,10 +18,38 @@
 # 💾 Requirements: 1GB RAM, 5GB disk space, 64-bit architecture
 ###############################################################################
 
-# Script Information
-SCRIPT_NAME="SkyLab"
-SCRIPT_VERSION="1.0.0"
-TOTAL_STEPS=13
+# Load configuration file
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$SCRIPT_DIR/skylab.conf"
+
+if [[ -f "$CONFIG_FILE" ]]; then
+    echo "Loading configuration from $CONFIG_FILE..."
+    source "$CONFIG_FILE"
+    
+    # Validate configuration
+    if declare -f validate_config >/dev/null; then
+        if ! validate_config; then
+            echo "Configuration validation failed. Please check $CONFIG_FILE"
+            exit 1
+        fi
+    fi
+else
+    echo "Warning: Configuration file not found at $CONFIG_FILE"
+    echo "Using default values..."
+    
+    # Default values if config file is missing
+    SCRIPT_NAME="SkyLab"
+    SCRIPT_VERSION="2.0.0"
+    MIN_MEMORY_GB=2
+    MIN_DISK_GB=10
+    RETRY_ATTEMPTS=3
+    RETRY_DELAY=5
+fi
+
+# Script Information (can be overridden by config)
+SCRIPT_NAME=${SCRIPT_NAME:-"SkyLab"}
+SCRIPT_VERSION=${SCRIPT_VERSION:-"2.0.0"}
+TOTAL_STEPS=14
 #
 # Welcome Banner
 Welcome_Banner() {
@@ -155,40 +183,147 @@ onCtrlC() {
 }
 
 ###############################################################################
-# Helpers                                                                     #
+# Enhanced Logging and Error Handling                                         #
 ###############################################################################
 
+# Log file configuration
+LOG_DIR="/var/log/skylab"
+LOG_FILE="$LOG_DIR/skylab-$(date +%Y%m%d-%H%M%S).log"
+ERROR_LOG="$LOG_DIR/skylab-errors.log"
+DEBUG_MODE=${DEBUG_MODE:-false}
+
+# Initialize logging
+Init_Logging() {
+    # Create log directory if it doesn't exist
+    ${sudo_cmd} mkdir -p "$LOG_DIR" 2>/dev/null || {
+        LOG_DIR="/tmp/skylab-logs"
+        LOG_FILE="$LOG_DIR/skylab-$(date +%Y%m%d-%H%M%S).log"
+        ERROR_LOG="$LOG_DIR/skylab-errors.log"
+        mkdir -p "$LOG_DIR"
+    }
+    
+    # Set proper permissions
+    ${sudo_cmd} chmod 755 "$LOG_DIR" 2>/dev/null || true
+    
+    # Initialize log files
+    echo "SkyLab Installation Log - $(date)" > "$LOG_FILE"
+    echo "System: $UNAME_U $UNAME_M" >> "$LOG_FILE"
+    echo "Distribution: $DIST" >> "$LOG_FILE"
+    echo "Memory: ${PHYSICAL_MEMORY}MB" >> "$LOG_FILE"
+    echo "Free Disk: ${FREE_DISK_GB}GB" >> "$LOG_FILE"
+    echo "----------------------------------------" >> "$LOG_FILE"
+}
+
+# Enhanced logging function
+Log_Message() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local caller="${BASH_SOURCE[2]##*/}:${BASH_LINENO[1]}"
+    
+    # Log to file
+    echo "[$timestamp] [$level] [$caller] $message" >> "$LOG_FILE" 2>/dev/null || true
+    
+    # Log errors to separate error log
+    if [[ "$level" == "ERROR" || "$level" == "CRITICAL" ]]; then
+        echo "[$timestamp] [$level] [$caller] $message" >> "$ERROR_LOG" 2>/dev/null || true
+    fi
+    
+    # Debug logging
+    if [[ "$DEBUG_MODE" == "true" && "$level" == "DEBUG" ]]; then
+        echo "[$timestamp] [DEBUG] [$caller] $message" >> "$LOG_FILE" 2>/dev/null || true
+    fi
+}
+
+# Error handling function
+Handle_Error() {
+    local exit_code=$?
+    local line_number=$1
+    local command="$2"
+    
+    Log_Message "ERROR" "Command failed with exit code $exit_code at line $line_number: $command"
+    Show 1 "Critical error occurred. Check log file: $LOG_FILE"
+    
+    # Cleanup on error
+    Cleanup_On_Error
+    exit $exit_code
+}
+
+# Cleanup function for error scenarios
+Cleanup_On_Error() {
+    Log_Message "INFO" "Performing cleanup due to error..."
+    
+    # Stop any running Docker containers that might have been started
+    if command -v docker >/dev/null 2>&1; then
+        ${sudo_cmd} docker stop $(${sudo_cmd} docker ps -q) 2>/dev/null || true
+    fi
+    
+    # Remove temporary files
+    rm -f /tmp/skylab-* 2>/dev/null || true
+    
+    Log_Message "INFO" "Cleanup completed"
+}
+
+# Set error trap
+set -eE
+trap 'Handle_Error $LINENO "$BASH_COMMAND"' ERR
+
 #######################################
-# Custom printing function
+# Enhanced printing function with logging
 # Globals:
-#   None
+#   LOG_FILE, ERROR_LOG
 # Arguments:
-#   $1 0:OK   1:FAILED  2:INFO  3:NOTICE
+#   $1 0:OK   1:FAILED  2:INFO  3:NOTICE  4:WORKING  5:DEBUG
 #   message
 # Returns:
 #   None
 #######################################
 
 Show() {
+    local level_num="$1"
+    local message="$2"
     local timestamp=$(date '+%H:%M:%S')
+    local log_level
+    
+    # Map numeric levels to log levels
+    case $level_num in
+        0) log_level="SUCCESS" ;;
+        1) log_level="ERROR" ;;
+        2) log_level="INFO" ;;
+        3) log_level="WARNING" ;;
+        4) log_level="WORKING" ;;
+        5) log_level="DEBUG" ;;
+        *) log_level="INFO" ;;
+    esac
+    
+    # Log the message
+    Log_Message "$log_level" "$message"
+    
+    # Display to console (skip DEBUG unless in debug mode)
+    if [[ $level_num -eq 5 && "$DEBUG_MODE" != "true" ]]; then
+        return
+    fi
+    
     # Check if stdout is a terminal
     if [[ -t 1 ]]; then
-        case $1 in
-        0) echo -e "${colorDim}[$timestamp]${colorReset} [${colorGreen}✓${colorReset}] $2" ;;
-        1) echo -e "${colorDim}[$timestamp]${colorReset} [${colorRed}✗${colorReset}] $2" ;;
-        2) echo -e "${colorDim}[$timestamp]${colorReset} [${colorYellow}!${colorReset}] $2" ;;
-        3) echo -e "${colorDim}[$timestamp]${colorReset} [${colorYellow}⚠${colorReset}] $2" ;;
-        4) echo -e "${colorDim}[$timestamp]${colorReset} [${colorCyan}🔄${colorReset}] $2" ;;
-        *) echo -e "${colorDim}[$timestamp]${colorReset} [${colorBlue}ℹ${colorReset}] $2" ;;
+        case $level_num in
+        0) echo -e "${colorDim}[$timestamp]${colorReset} [${colorGreen}✓${colorReset}] $message" ;;
+        1) echo -e "${colorDim}[$timestamp]${colorReset} [${colorRed}✗${colorReset}] $message" ;;
+        2) echo -e "${colorDim}[$timestamp]${colorReset} [${colorYellow}!${colorReset}] $message" ;;
+        3) echo -e "${colorDim}[$timestamp]${colorReset} [${colorYellow}⚠${colorReset}] $message" ;;
+        4) echo -e "${colorDim}[$timestamp]${colorReset} [${colorCyan}🔄${colorReset}] $message" ;;
+        5) echo -e "${colorDim}[$timestamp]${colorReset} [${colorMagenta}🐛${colorReset}] $message" ;;
+        *) echo -e "${colorDim}[$timestamp]${colorReset} [${colorBlue}ℹ${colorReset}] $message" ;;
         esac
     else
-        case $1 in
-        0) echo "[$timestamp] [OK] $2" ;;
-        1) echo "[$timestamp] [ERROR] $2" ;;
-        2) echo "[$timestamp] [INFO] $2" ;;
-        3) echo "[$timestamp] [WARNING] $2" ;;
-        4) echo "[$timestamp] [WORKING] $2" ;;
-        *) echo "[$timestamp] [INFO] $2" ;;
+        case $level_num in
+        0) echo "[$timestamp] [OK] $message" ;;
+        1) echo "[$timestamp] [ERROR] $message" ;;
+        2) echo "[$timestamp] [INFO] $message" ;;
+        3) echo "[$timestamp] [WARNING] $message" ;;
+        4) echo "[$timestamp] [WORKING] $message" ;;
+        5) echo "[$timestamp] [DEBUG] $message" ;;
+        *) echo "[$timestamp] [INFO] $message" ;;
         esac
     fi
 }
@@ -393,85 +528,363 @@ Check_Disk() {
     fi
 }
 
-# Update package
-Update_Package_Resource() {
-    Show 2 "Updating package manager..."
-    GreyStart
-    if [ -x "$(command -v apk)" ]; then
-        ${sudo_cmd} apk update || {
-            Show 3 "Package update failed for apk, continuing anyway..."
+###############################################################################
+# Configuration Validation Functions                                          #
+###############################################################################
+
+# Validate environment configuration
+Validate_Environment() {
+    Show 5 "Validating environment configuration..."
+    
+    # Check if .env file exists and validate required variables
+    if [[ -f ".env" ]]; then
+        Show 2 "Found .env file, validating configuration..."
+        
+        # Source the .env file safely
+        set -a
+        source .env 2>/dev/null || {
+            Show 3 "Warning: Could not source .env file properly"
         }
-    elif [ -x "$(command -v apt-get)" ]; then
-        ${sudo_cmd} apt-get update -qq || {
-            Show 3 "Package update failed for apt-get, continuing anyway..."
-        }
-    elif [ -x "$(command -v dnf)" ]; then
-        ${sudo_cmd} dnf check-update || {
-            Show 3 "Package update check failed for dnf, continuing anyway..."
-        }
-    elif [ -x "$(command -v zypper)" ]; then
-        ${sudo_cmd} zypper refresh || {
-            Show 3 "Package update failed for zypper, continuing anyway..."
-        }
-    elif [ -x "$(command -v yum)" ]; then
-        ${sudo_cmd} yum check-update || {
-            Show 3 "Package update check failed for yum, continuing anyway..."
-        }
+        set +a
+        
+        # Validate critical environment variables
+        local required_vars=("CASA_OS_VERSION" "DOCKER_COMPOSE_VERSION")
+        local missing_vars=()
+        
+        for var in "${required_vars[@]}"; do
+            if [[ -z "${!var}" ]]; then
+                missing_vars+=("$var")
+            fi
+        done
+        
+        if [[ ${#missing_vars[@]} -gt 0 ]]; then
+            Show 3 "Missing required environment variables: ${missing_vars[*]}"
+            Show 2 "Using default values for missing variables"
+        else
+            Show 0 "Environment configuration validated successfully"
+        fi
+    else
+        Show 2 "No .env file found, using default configuration"
     fi
-    ColorReset
-    Show 0 "Package manager update complete."
 }
 
-# Install depends package
+# Validate system prerequisites
+Validate_System_Prerequisites() {
+    Show 5 "Validating system prerequisites..."
+    
+    local validation_errors=()
+    
+    # Check internet connectivity
+    if ! ping -c 1 8.8.8.8 >/dev/null 2>&1; then
+        validation_errors+=("No internet connectivity detected")
+    fi
+    
+    # Check if running in container
+    if [[ -f /.dockerenv ]]; then
+        validation_errors+=("Running inside Docker container is not supported")
+    fi
+    
+    # Check for conflicting services
+    if systemctl is-active --quiet apache2 2>/dev/null; then
+        Show 3 "Apache2 is running and may conflict with Docker services"
+    fi
+    
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        Show 3 "Nginx is running and may conflict with Docker services"
+    fi
+    
+    # Report validation results
+    if [[ ${#validation_errors[@]} -gt 0 ]]; then
+        Show 1 "System validation failed:"
+        for error in "${validation_errors[@]}"; do
+            Show 1 "  - $error"
+        done
+        return 1
+    else
+        Show 0 "System prerequisites validation passed"
+        return 0
+    fi
+}
+
+# Enhanced package update with retry logic
+Update_Package_Resource() {
+    Show 2 "Updating package manager..."
+    Log_Message "INFO" "Starting package manager update"
+    
+    local max_retries=3
+    local retry_count=0
+    local update_success=false
+    
+    while [[ $retry_count -lt $max_retries && $update_success == false ]]; do
+        if [[ $retry_count -gt 0 ]]; then
+            Show 2 "Retry attempt $retry_count/$max_retries..."
+            sleep 5
+        fi
+        
+        GreyStart
+        
+        if [ -x "$(command -v apk)" ]; then
+            if ${sudo_cmd} apk update; then
+                update_success=true
+                Log_Message "SUCCESS" "APK package update successful"
+            else
+                Log_Message "WARNING" "APK package update failed on attempt $((retry_count + 1))"
+            fi
+        elif [ -x "$(command -v apt-get)" ]; then
+            if ${sudo_cmd} apt-get update -qq; then
+                update_success=true
+                Log_Message "SUCCESS" "APT package update successful"
+            else
+                Log_Message "WARNING" "APT package update failed on attempt $((retry_count + 1))"
+            fi
+        elif [ -x "$(command -v dnf)" ]; then
+            if ${sudo_cmd} dnf check-update || [[ $? -eq 100 ]]; then  # dnf returns 100 when updates are available
+                update_success=true
+                Log_Message "SUCCESS" "DNF package update successful"
+            else
+                Log_Message "WARNING" "DNF package update failed on attempt $((retry_count + 1))"
+            fi
+        elif [ -x "$(command -v zypper)" ]; then
+            if ${sudo_cmd} zypper refresh; then
+                update_success=true
+                Log_Message "SUCCESS" "Zypper package update successful"
+            else
+                Log_Message "WARNING" "Zypper package update failed on attempt $((retry_count + 1))"
+            fi
+        elif [ -x "$(command -v yum)" ]; then
+            if ${sudo_cmd} yum check-update || [[ $? -eq 100 ]]; then  # yum returns 100 when updates are available
+                update_success=true
+                Log_Message "SUCCESS" "YUM package update successful"
+            else
+                Log_Message "WARNING" "YUM package update failed on attempt $((retry_count + 1))"
+            fi
+        elif [ -x "$(command -v pacman)" ]; then
+            if ${sudo_cmd} pacman -Sy; then
+                update_success=true
+                Log_Message "SUCCESS" "Pacman package update successful"
+            else
+                Log_Message "WARNING" "Pacman package update failed on attempt $((retry_count + 1))"
+            fi
+        else
+            Show 1 "No supported package manager found"
+            Log_Message "ERROR" "No supported package manager detected"
+            return 1
+        fi
+        
+        ColorReset
+        ((retry_count++))
+    done
+    
+    if [[ $update_success == true ]]; then
+        Show 0 "Package manager update completed successfully"
+    else
+        Show 3 "Package manager update failed after $max_retries attempts, continuing anyway..."
+        Log_Message "WARNING" "Package update failed after all retry attempts"
+    fi
+}
+
+###############################################################################
+# Enhanced Dependency Management                                              #
+###############################################################################
+
+# Install dependencies with enhanced error handling and retry logic
 Install_Depends() {
+    Show 2 "Installing system dependencies..."
+    Log_Message "INFO" "Starting dependency installation process"
+    
+    local failed_packages=()
+    local installed_packages=()
+    local skipped_packages=()
+    
     for ((i = 0; i < ${#SYSTEM_DEPANDS_COMMAND[@]}; i++)); do
         cmd=${SYSTEM_DEPANDS_COMMAND[i]}
-        if [[ ! -x $(${sudo_cmd} which "$cmd" 2>/dev/null) ]]; then
-            packagesNeeded=${SYSTEM_DEPANDS_PACKAGE[i]}
-            Show 2 "Install the necessary dependencies: \e[33m$packagesNeeded \e[0m"
-            GreyStart
-            if [ -x "$(command -v apk)" ]; then
-                ${sudo_cmd} apk add --no-cache "$packagesNeeded" || {
-                    Show 1 "Failed to install $packagesNeeded using apk"
-                    exit 1
-                }
-            elif [ -x "$(command -v apt-get)" ]; then
-                ${sudo_cmd} apt-get -y -qq install "$packagesNeeded" --no-upgrade || {
-                    Show 1 "Failed to install $packagesNeeded using apt-get"
-                    exit 1
-                }
-            elif [ -x "$(command -v dnf)" ]; then
-                ${sudo_cmd} dnf install -y "$packagesNeeded" || {
-                    Show 1 "Failed to install $packagesNeeded using dnf"
-                    exit 1
-                }
-            elif [ -x "$(command -v zypper)" ]; then
-                ${sudo_cmd} zypper install -y "$packagesNeeded" || {
-                    Show 1 "Failed to install $packagesNeeded using zypper"
-                    exit 1
-                }
-            elif [ -x "$(command -v yum)" ]; then
-                ${sudo_cmd} yum install -y "$packagesNeeded" || {
-                    Show 1 "Failed to install $packagesNeeded using yum"
-                    exit 1
-                }
-            elif [ -x "$(command -v pacman)" ]; then
-                ${sudo_cmd} pacman -S --noconfirm "$packagesNeeded" || {
-                    Show 1 "Failed to install $packagesNeeded using pacman"
-                    exit 1
-                }
-            elif [ -x "$(command -v paru)" ]; then
-                ${sudo_cmd} paru -S --noconfirm "$packagesNeeded" || {
-                    Show 1 "Failed to install $packagesNeeded using paru"
-                    exit 1
-                }
-            else
-                Show 1 "Package manager not found. You must manually install: \e[33m$packagesNeeded \e[0m"
-                exit 1
+        packagesNeeded=${SYSTEM_DEPANDS_PACKAGE[i]}
+        
+        # Check if command already exists
+        if [[ -x $(${sudo_cmd} which "$cmd" 2>/dev/null) ]]; then
+            Show 5 "Command '$cmd' already available, skipping $packagesNeeded"
+            skipped_packages+=("$packagesNeeded")
+            continue
+        fi
+        
+        Show 4 "Installing dependency: $packagesNeeded"
+        Log_Message "INFO" "Installing package: $packagesNeeded for command: $cmd"
+        
+        local install_success=false
+        local max_retries=2
+        local retry_count=0
+        
+        while [[ $retry_count -lt $max_retries && $install_success == false ]]; do
+            if [[ $retry_count -gt 0 ]]; then
+                Show 2 "Retrying installation of $packagesNeeded (attempt $((retry_count + 1))/$max_retries)..."
+                sleep 3
             fi
+            
+            GreyStart
+            
+            if [ -x "$(command -v apk)" ]; then
+                if ${sudo_cmd} apk add --no-cache "$packagesNeeded"; then
+                    install_success=true
+                fi
+            elif [ -x "$(command -v apt-get)" ]; then
+                if ${sudo_cmd} apt-get -y -qq install "$packagesNeeded" --no-upgrade; then
+                    install_success=true
+                fi
+            elif [ -x "$(command -v dnf)" ]; then
+                if ${sudo_cmd} dnf install -y "$packagesNeeded"; then
+                    install_success=true
+                fi
+            elif [ -x "$(command -v zypper)" ]; then
+                if ${sudo_cmd} zypper install -y "$packagesNeeded"; then
+                    install_success=true
+                fi
+            elif [ -x "$(command -v yum)" ]; then
+                if ${sudo_cmd} yum install -y "$packagesNeeded"; then
+                    install_success=true
+                fi
+            elif [ -x "$(command -v pacman)" ]; then
+                if ${sudo_cmd} pacman -S --noconfirm "$packagesNeeded"; then
+                    install_success=true
+                fi
+            elif [ -x "$(command -v paru)" ]; then
+                if ${sudo_cmd} paru -S --noconfirm "$packagesNeeded"; then
+                    install_success=true
+                fi
+            else
+                Show 1 "No supported package manager found"
+                Log_Message "ERROR" "No supported package manager detected"
+                failed_packages+=("$packagesNeeded")
+                break
+            fi
+            
             ColorReset
+            ((retry_count++))
+        done
+        
+        if [[ $install_success == true ]]; then
+            Show 0 "Successfully installed: $packagesNeeded"
+            Log_Message "SUCCESS" "Package installed successfully: $packagesNeeded"
+            installed_packages+=("$packagesNeeded")
+        else
+            Show 1 "Failed to install: $packagesNeeded after $max_retries attempts"
+            Log_Message "ERROR" "Package installation failed: $packagesNeeded"
+            failed_packages+=("$packagesNeeded")
         fi
     done
+    
+    # Report installation summary
+    Show 2 "Dependency installation summary:"
+    if [[ ${#installed_packages[@]} -gt 0 ]]; then
+        Show 0 "Installed (${#installed_packages[@]}): ${installed_packages[*]}"
+    fi
+    if [[ ${#skipped_packages[@]} -gt 0 ]]; then
+        Show 2 "Skipped (${#skipped_packages[@]}): ${skipped_packages[*]}"
+    fi
+    if [[ ${#failed_packages[@]} -gt 0 ]]; then
+        Show 1 "Failed (${#failed_packages[@]}): ${failed_packages[*]}"
+        Log_Message "ERROR" "Failed packages: ${failed_packages[*]}"
+        return 1
+    fi
+    
+    Log_Message "SUCCESS" "Dependency installation completed successfully"
+    return 0
+}
+
+# Enhanced dependency verification
+Check_Dependency_Installation() {
+    Show 2 "Verifying dependency installation..."
+    Log_Message "INFO" "Starting dependency verification"
+    
+    local failed_commands=()
+    local verified_commands=()
+    
+    for ((i = 0; i < ${#SYSTEM_DEPANDS_COMMAND[@]}; i++)); do
+        cmd=${SYSTEM_DEPANDS_COMMAND[i]}
+        packagesNeeded=${SYSTEM_DEPANDS_PACKAGE[i]}
+        
+        if [[ -x $(${sudo_cmd} which "$cmd" 2>/dev/null) ]]; then
+            Show 5 "✓ Command verified: $cmd"
+            verified_commands+=("$cmd")
+        else
+            Show 1 "✗ Command not found: $cmd (package: $packagesNeeded)"
+            failed_commands+=("$cmd")
+        fi
+    done
+    
+    # Report verification results
+    if [[ ${#failed_commands[@]} -gt 0 ]]; then
+        Show 1 "Dependency verification failed for: ${failed_commands[*]}"
+        Show 2 "Please install missing dependencies manually and run the script again."
+        Log_Message "ERROR" "Dependency verification failed: ${failed_commands[*]}"
+        return 1
+    else
+        Show 0 "All dependencies verified successfully (${#verified_commands[@]} commands)"
+        Log_Message "SUCCESS" "All dependencies verified: ${verified_commands[*]}"
+        return 0
+    fi
+}
+
+###############################################################################
+# System Health Monitoring                                                    #
+###############################################################################
+
+# System health check function
+Perform_Health_Check() {
+    Show 2 "Performing system health check..."
+    Log_Message "INFO" "Starting system health check"
+    
+    local health_issues=()
+    local health_warnings=()
+    
+    # Check disk space
+    local disk_usage=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
+    if [[ $disk_usage -gt 90 ]]; then
+        health_issues+=("Disk usage is critically high: ${disk_usage}%")
+    elif [[ $disk_usage -gt 80 ]]; then
+        health_warnings+=("Disk usage is high: ${disk_usage}%")
+    fi
+    
+    # Check memory usage
+    local mem_usage=$(free | awk 'NR==2{printf "%.0f", $3*100/$2}')
+    if [[ $mem_usage -gt 95 ]]; then
+        health_issues+=("Memory usage is critically high: ${mem_usage}%")
+    elif [[ $mem_usage -gt 85 ]]; then
+        health_warnings+=("Memory usage is high: ${mem_usage}%")
+    fi
+    
+    # Check system load
+    local load_avg=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | sed 's/,//')
+    local cpu_cores=$(nproc)
+    if (( $(echo "$load_avg > $cpu_cores * 2" | bc -l) )); then
+        health_warnings+=("System load is high: $load_avg (cores: $cpu_cores)")
+    fi
+    
+    # Check for zombie processes
+    local zombie_count=$(ps aux | awk '$8 ~ /^Z/ { count++ } END { print count+0 }')
+    if [[ $zombie_count -gt 0 ]]; then
+        health_warnings+=("Found $zombie_count zombie processes")
+    fi
+    
+    # Report health status
+    if [[ ${#health_issues[@]} -gt 0 ]]; then
+        Show 1 "Critical health issues detected:"
+        for issue in "${health_issues[@]}"; do
+            Show 1 "  - $issue"
+            Log_Message "ERROR" "Health issue: $issue"
+        done
+        return 1
+    elif [[ ${#health_warnings[@]} -gt 0 ]]; then
+        Show 3 "Health warnings detected:"
+        for warning in "${health_warnings[@]}"; do
+            Show 3 "  - $warning"
+            Log_Message "WARNING" "Health warning: $warning"
+        done
+        return 0
+    else
+        Show 0 "System health check passed"
+        Log_Message "SUCCESS" "System health check completed successfully"
+        return 0
+    fi
 }
 
 Check_Dependency_Installation() {
@@ -1087,6 +1500,23 @@ fi
 
 Show 0 "Pre-flight checks completed successfully."
 
+# Initialize enhanced logging system
+Init_Logging
+Show 0 "Logging system initialized. Log file: $LOG_FILE"
+
+# Validate environment and system prerequisites
+Show 2 "Running enhanced system validation..."
+Validate_Environment
+if ! Validate_System_Prerequisites; then
+    Show 1 "System validation failed. Please resolve the issues above before continuing."
+    exit 1
+fi
+
+# Perform initial health check
+if ! Perform_Health_Check; then
+    Show 3 "System health check detected issues. Continuing with installation but monitor system resources."
+fi
+
 # Main execution flow with interactive progress
 echo -e "${GREEN_LINE}"
 echo -e " ${GREEN_BULLET} Starting $SCRIPT_NAME System Setup..."
@@ -1148,6 +1578,20 @@ Install_Filebrowser
 # Step 13: Install PiVPN
 Step_Header 13 "Installing PiVPN (Containerized OpenVPN Server)"
 Install_PiVPN
+
+# Step 14: Final System Health Check
+Step_Header 14 "Performing Final System Health Check"
+Show 4 "Running post-installation health check..."
+if Perform_Health_Check; then
+    Show 0 "✅ All systems operational and healthy!"
+else
+    Show 3 "⚠️  Some health check warnings detected. System is functional but may need attention."
+fi
+
+# Log installation summary
+Log_Message "INFO" "SkyLab installation completed successfully"
+Log_Message "INFO" "Installation log saved to: $LOG_FILE"
+Show 0 "Installation completed! Check $LOG_FILE for detailed logs."
 
 # Final Step: Show Completion Banner
 Completion_Banner

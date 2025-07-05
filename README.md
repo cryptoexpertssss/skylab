@@ -1,6 +1,8 @@
-# 🚀 SkyLab - Complete Home Lab Stack
+# SkyLab - Advanced Home Lab Setup Orchestrator
 
-A comprehensive, containerized home lab environment that provides essential services for self-hosting, VPN access, monitoring, and network management.
+🚀 **An intelligent, interactive system setup script for comprehensive home lab environments**
+
+SkyLab is an enhanced version of the original CasaOS installer, evolved into a comprehensive home lab setup orchestrator with advanced logging, error handling, and system monitoring capabilities.
 
 ## 📋 Table of Contents
 
