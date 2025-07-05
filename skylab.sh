@@ -335,8 +335,10 @@ Show_Progress() {
         printf "%*s" $filled | tr ' ' "$PROGRESS_CHAR"
         printf "%*s" $empty | tr ' ' "$PROGRESS_EMPTY"
         printf "] Step %d/%d: %s${colorReset}" $current $total "$step_name"
+        # Add newline for real-time display to prevent concatenation
+        echo ""
         # Flush output for real-time display
-        printf "" && sleep 0.1
+        sleep 0.1
     else
         printf "\r${colorBold}[%s] %3d%% [" "$SCRIPT_NAME"
         printf "%*s" $filled | tr ' ' "$PROGRESS_CHAR"
