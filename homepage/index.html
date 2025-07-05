@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkyLab Command Center</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;700&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Fira Code', monospace;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%);
+            color: #00ff41;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        
+        .matrix-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            opacity: 0.1;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 20px;
+            border: 2px solid #00ff41;
+            border-radius: 10px;
+            background: rgba(0, 255, 65, 0.05);
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.3);
+        }
+        
+        .title {
+            font-size: 3rem;
+            font-weight: 700;
+            text-shadow: 0 0 10px #00ff41;
+            margin-bottom: 10px;
+            animation: glow 2s ease-in-out infinite alternate;
+        }
+        
+        .subtitle {
+            font-size: 1.2rem;
+            color: #00ccff;
+            opacity: 0.8;
+        }
+        
+        .services-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+        
+        .service-card {
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid #00ff41;
+            border-radius: 10px;
+            padding: 20px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .service-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 255, 65, 0.3);
+            border-color: #00ccff;
+        }
+        
+        .service-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(0, 255, 65, 0.1), transparent);
+            transition: left 0.5s;
+        }
+        
+        .service-card:hover::before {
+            left: 100%;
+        }
+        
+        .service-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .service-icon {
+            font-size: 2rem;
+            margin-right: 15px;
+            color: #00ccff;
+        }
+        
+        .service-name {
+            font-size: 1.3rem;
+            font-weight: 500;
+            color: #ffffff;
+        }
+        
+        .service-description {
+            color: #cccccc;
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+            line-height: 1.4;
+        }
+        
+        .service-url {
+            display: inline-block;
+            color: #00ff41;
+            text-decoration: none;
+            padding: 8px 16px;
+            border: 1px solid #00ff41;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+        
+        .service-url:hover {
+            background: #00ff41;
+            color: #000000;
+            box-shadow: 0 0 15px rgba(0, 255, 65, 0.5);
+        }
+        
+        .status-indicator {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #00ff41;
+            box-shadow: 0 0 10px #00ff41;
+            animation: pulse 2s infinite;
+        }
+        
+        .system-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 40px;
+        }
+        
+        .info-card {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid #00ccff;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .info-title {
+            color: #00ccff;
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+        
+        .info-value {
+            color: #ffffff;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+        
+        .terminal {
+            background: #000000;
+            border: 1px solid #00ff41;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 40px;
+            font-family: 'Fira Code', monospace;
+        }
+        
+        .terminal-header {
+            color: #00ff41;
+            margin-bottom: 15px;
+            font-weight: 500;
+        }
+        
+        .terminal-content {
+            color: #cccccc;
+            line-height: 1.6;
+        }
+        
+        .command {
+            color: #00ccff;
+        }
+        
+        @keyframes glow {
+            from { text-shadow: 0 0 10px #00ff41; }
+            to { text-shadow: 0 0 20px #00ff41, 0 0 30px #00ff41; }
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding: 20px;
+            color: #666666;
+            border-top: 1px solid #333333;
+        }
+        
+        @media (max-width: 768px) {
+            .title {
+                font-size: 2rem;
+            }
+            
+            .services-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas class="matrix-bg" id="matrix"></canvas>
+    
+    <div class="container">
+        <div class="header">
+            <h1 class="title">SKYLAB COMMAND CENTER</h1>
+            <p class="subtitle">// Homelab Infrastructure Management Portal //</p>
+        </div>
+        
+        <div class="services-grid">
+            <div class="service-card">
+                <div class="status-indicator"></div>
+                <div class="service-header">
+                    <div class="service-icon">📁</div>
+                    <div class="service-name">Filebrowser</div>
+                </div>
+                <div class="service-description">
+                    Web-based file management system with upload, download, and sharing capabilities.
+                </div>
+                <a href="http://localhost:8080" class="service-url" target="_blank">ACCESS PORTAL</a>
+            </div>
+            
+            <div class="service-card">
+                <div class="status-indicator"></div>
+                <div class="service-header">
+                    <div class="service-icon">🛡️</div>
+                    <div class="service-name">AdGuard Home</div>
+                </div>
+                <div class="service-description">
+                    Network-wide DNS ad blocker and privacy protection system.
+                </div>
+                <a href="http://localhost:3000" class="service-url" target="_blank">ACCESS PORTAL</a>
+            </div>
+            
+            <div class="service-card">
+                <div class="status-indicator"></div>
+                <div class="service-header">
+                    <div class="service-icon">🐳</div>
+                    <div class="service-name">Portainer</div>
+                </div>
+                <div class="service-description">
+                    Docker container management interface for monitoring and controlling services.
+                </div>
+                <a href="http://localhost:9000" class="service-url" target="_blank">ACCESS PORTAL</a>
+            </div>
+            
+            <div class="service-card">
+                <div class="status-indicator"></div>
+                <div class="service-header">
+                    <div class="service-icon">🔄</div>
+                    <div class="service-name">Nginx Proxy Manager</div>
+                </div>
+                <div class="service-description">
+                    Reverse proxy management with SSL certificate automation.
+                </div>
+                <a href="http://localhost:81" class="service-url" target="_blank">ACCESS PORTAL</a>
+            </div>
+            
+            <div class="service-card">
+                <div class="status-indicator"></div>
+                <div class="service-header">
+                    <div class="service-icon">📊</div>
+                    <div class="service-name">Uptime Kuma</div>
+                </div>
+                <div class="service-description">
+                    Self-hosted monitoring tool for tracking service availability and performance.
+                </div>
+                <a href="http://localhost:3001" class="service-url" target="_blank">ACCESS PORTAL</a>
+            </div>
+            
+            <div class="service-card">
+                <div class="status-indicator"></div>
+                <div class="service-header">
+                    <div class="service-icon">🕳️</div>
+                    <div class="service-name">Pi-hole</div>
+                </div>
+                <div class="service-description">
+                    Network-level advertisement and internet tracker blocking DNS sinkhole.
+                </div>
+                <a href="http://localhost:8081" class="service-url" target="_blank">ACCESS PORTAL</a>
+            </div>
+            
+            <div class="service-card">
+                <div class="status-indicator"></div>
+                <div class="service-header">
+                    <div class="service-icon">🏠</div>
+                    <div class="service-name">Heimdall</div>
+                </div>
+                <div class="service-description">
+                    Application dashboard for organizing and accessing all your homelab services.
+                </div>
+                <a href="http://localhost:8082" class="service-url" target="_blank">ACCESS PORTAL</a>
+            </div>
+            
+            <div class="service-card">
+                <div class="status-indicator"></div>
+                <div class="service-header">
+                    <div class="service-icon">🔍</div>
+                    <div class="service-name">Watchtower</div>
+                </div>
+                <div class="service-description">
+                    Automatic Docker container update service running in background.
+                </div>
+                <a href="#" class="service-url" onclick="alert('Watchtower runs as a background service')">BACKGROUND SERVICE</a>
+            </div>
+        </div>
+        
+        <div class="system-info">
+            <div class="info-card">
+                <div class="info-title">SYSTEM STATUS</div>
+                <div class="info-value">OPERATIONAL</div>
+            </div>
+            <div class="info-card">
+                <div class="info-title">ACTIVE SERVICES</div>
+                <div class="info-value" id="serviceCount">8</div>
+            </div>
+            <div class="info-card">
+                <div class="info-title">UPTIME</div>
+                <div class="info-value" id="uptime">--:--:--</div>
+            </div>
+            <div class="info-card">
+                <div class="info-title">LAST UPDATE</div>
+                <div class="info-value" id="lastUpdate">--</div>
+            </div>
+        </div>
+        
+        <div class="terminal">
+            <div class="terminal-header">// QUICK ACCESS COMMANDS //</div>
+            <div class="terminal-content">
+                <span class="command">docker ps</span> - List running containers<br>
+                <span class="command">docker-compose up -d</span> - Start all services<br>
+                <span class="command">docker-compose down</span> - Stop all services<br>
+                <span class="command">lazydocker</span> - Open Docker management UI<br>
+                <span class="command">docker logs [container]</span> - View container logs<br>
+                <span class="command">docker restart [container]</span> - Restart specific service
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>SkyLab Homelab Management System | Powered by Docker & Open Source</p>
+        </div>
+    </div>
+    
+    <script>
+        // Matrix rain effect
+        const canvas = document.getElementById('matrix');
+        const ctx = canvas.getContext('2d');
+        
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        
+        const matrix = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789@#$%^&*()*&^%+-/~{[|`]}";
+        const matrixArray = matrix.split("");
+        
+        const fontSize = 10;
+        const columns = canvas.width / fontSize;
+        
+        const drops = [];
+        for(let x = 0; x < columns; x++) {
+            drops[x] = 1;
+        }
+        
+        function draw() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.04)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = '#00ff41';
+            ctx.font = fontSize + 'px Fira Code';
+            
+            for(let i = 0; i < drops.length; i++) {
+                const text = matrixArray[Math.floor(Math.random() * matrixArray.length)];
+                ctx.fillText(text, i * fontSize, drops[i] * fontSize);
+                
+                if(drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+                drops[i]++;
+            }
+        }
+        
+        setInterval(draw, 35);
+        
+        // Update time and status
+        function updateStatus() {
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = now.toLocaleTimeString();
+            
+            // Simple uptime simulation (you can replace with actual uptime)
+            const startTime = new Date();
+            startTime.setHours(startTime.getHours() - 2); // Simulate 2 hours uptime
+            const uptime = Math.floor((now - startTime) / 1000);
+            const hours = Math.floor(uptime / 3600);
+            const minutes = Math.floor((uptime % 3600) / 60);
+            const seconds = uptime % 60;
+            
+            document.getElementById('uptime').textContent = 
+                `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+        
+        // Update status every second
+        setInterval(updateStatus, 1000);
+        updateStatus();
+        
+        // Resize canvas on window resize
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+    </script>
+</body>
+</html>

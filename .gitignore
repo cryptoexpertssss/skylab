@@ -5,6 +5,7 @@
 # Docker volumes and data
 data/
 volumes/
+new/
 
 # Logs
 *.log

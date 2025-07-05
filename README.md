@@ -53,6 +53,7 @@ SkyLab is a Docker Compose-based home lab stack that provides:
 |---------|-------------|--------------|----------|
 | **Filebrowser** | Web-based file manager | 8080 | `filebrowser/filebrowser` |
 | **AdGuard Home** | DNS Ad Blocker & Privacy Protection | 3000, 53 | `adguard/adguardhome` |
+| **SkyLab Homepage** | Homelab dashboard with hacker vibes | 8888 | `nginx:alpine` |
 | **Watchtower** | Automatic container updates | - | `containrrr/watchtower` |
 | **Portainer** | Docker management UI | 9000 | `portainer/portainer-ce` |
 
@@ -185,6 +186,7 @@ All application data is stored under `/data/appdata/` by default:
 │   ├── config/          # AdGuard Home configuration
 │   ├── data/            # AdGuard Home data
 │   └── work/            # AdGuard Home working directory
+├── homepage/            # SkyLab homepage dashboard files
 ├── portainer/           # Portainer data
 ├── nginx-proxy-manager/ # Nginx Proxy Manager data
 ├── uptime-kuma/         # Uptime Kuma data
@@ -290,6 +292,7 @@ After deployment, services are accessible at:
 
 | Service | URL | Default Credentials |
 |---------|-----|--------------------|
+| **SkyLab Homepage** | `http://your-ip:8888` | - |
 | **Filebrowser** | `http://your-ip:8080` | admin / (generated) |
 | **AdGuard Home** | `http://your-ip:3000` | (setup required) |
 | **Portainer** | `http://your-ip:9000` | (setup required) |

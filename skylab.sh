@@ -49,7 +49,7 @@ fi
 # Script Information (can be overridden by config)
 SCRIPT_NAME=${SCRIPT_NAME:-"SkyLab"}
 SCRIPT_VERSION=${SCRIPT_VERSION:-"2.0.0"}
-TOTAL_STEPS=14
+TOTAL_STEPS=15
 #
 # Welcome Banner
 Welcome_Banner() {
@@ -1553,6 +1553,95 @@ Configuration_Addons() {
     fi
 }
 
+# Install SkyLab Homepage
+Install_Homepage() {
+    Show 2 "Installing SkyLab Homepage Dashboard..."
+    
+    local homepage_dir="${APP_DATA_BASE_DIR:-/data/appdata}/homepage"
+    local homepage_port=${HOMEPAGE_PORT:-8888}
+    
+    # Create homepage directory
+    Show 4 "Creating homepage directory..."
+    ${sudo_cmd} mkdir -p "$homepage_dir"
+    ${sudo_cmd} chmod 755 "$homepage_dir"
+    
+    # Set ownership if not root
+    if [[ $EUID -ne 0 ]] && [[ -n "$SUDO_USER" ]]; then
+        ${sudo_cmd} chown -R "$SUDO_USER:$SUDO_USER" "$homepage_dir" 2>/dev/null || {
+            Show 3 "Could not change ownership of $homepage_dir to $SUDO_USER"
+        }
+    fi
+    
+    # Check if homepage files exist in the script directory
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -f "$script_dir/homepage/index.html" ]]; then
+        Show 4 "Copying homepage files..."
+        ${sudo_cmd} cp -r "$script_dir/homepage/"* "$homepage_dir/" 2>/dev/null || {
+            Show 3 "Could not copy homepage files"
+        }
+        ${sudo_cmd} chmod +x "$homepage_dir/server.py" 2>/dev/null || true
+    else
+        Show 4 "Creating default homepage..."
+        # Create a simple default homepage if files don't exist
+        cat > "$homepage_dir/index.html" << 'EOF'
+<!DOCTYPE html>
+<html><head><title>SkyLab Dashboard</title></head>
+<body style="font-family: monospace; background: #000; color: #0f0; padding: 20px;">
+<h1>🚀 SkyLab Command Center</h1>
+<p>Your homelab services:</p>
+<ul>
+<li><a href="http://localhost:8080" style="color: #0ff;">Filebrowser</a></li>
+<li><a href="http://localhost:3000" style="color: #0ff;">AdGuard Home</a></li>
+<li><a href="http://localhost:9000" style="color: #0ff;">Portainer</a></li>
+</ul>
+</body></html>
+EOF
+    fi
+    
+    # Check if homepage container already exists
+    if ${sudo_cmd} docker ps -a --format "table {{.Names}}" | grep -q "skylab-homepage"; then
+        Show 2 "SkyLab Homepage container already exists."
+        
+        # Check if it's running
+        if ! ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "skylab-homepage"; then
+            Show 3 "Homepage container exists but is not running. Starting it..."
+            ${sudo_cmd} docker start skylab-homepage
+            Show 0 "Homepage container started."
+        fi
+    else
+        Show 4 "Creating and starting homepage container..."
+        ${sudo_cmd} docker run -d \
+            --name skylab-homepage \
+            --restart unless-stopped \
+            -p $homepage_port:80 \
+            -v "$homepage_dir:/usr/share/nginx/html:ro" \
+            nginx:alpine || {
+            Show 3 "Homepage container creation failed, but continuing..."
+            return 0
+        }
+        
+        # Wait for container to initialize
+        Show 4 "Waiting for homepage to initialize..."
+        sleep 5
+        
+        # Verify installation
+        if ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "skylab-homepage"; then
+            Show 0 "SkyLab Homepage installed and running successfully."
+            
+            # Get server IP for access instructions
+            local server_ip=$(curl -s ifconfig.me 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || hostname -I | awk '{print $1}')
+            if [[ -z "$server_ip" ]]; then
+                server_ip=$(hostname -I | awk '{print $1}')
+            fi
+            
+            Show 2 "Homepage available at: http://$server_ip:$homepage_port"
+            Show 2 "Local access: http://localhost:$homepage_port"
+        else
+            Show 3 "Homepage container created but may not be running properly."
+        fi
+    fi
+}
+
 # Show completion banner
 Completion_Banner() {
     clear
@@ -1578,19 +1667,22 @@ Completion_Banner() {
     echo -e "   ${colorGreen}•${colorReset} Watchtower ${colorDim}(Automatic container updates)${colorReset}"
     echo -e "   ${colorGreen}•${colorReset} Filebrowser ${colorDim}(Web-based file management)${colorReset}"
     echo -e "   ${colorGreen}•${colorReset} AdGuard Home ${colorDim}(DNS Ad Blocker)${colorReset}"
+    echo -e "   ${colorGreen}•${colorReset} SkyLab Homepage ${colorDim}(Homelab dashboard)${colorReset}"
     
     echo -e "\n${colorBold}${colorYellow}🚀 NEXT STEPS:${colorReset}"
-    echo -e "   ${colorBlue}1.${colorReset} Access Filebrowser: ${colorDim}http://localhost:8080 (admin/admin)${colorReset}"
-    echo -e "   ${colorBlue}2.${colorReset} Access AdGuard Home: ${colorDim}http://localhost:3000${colorReset}"
-    echo -e "   ${colorBlue}3.${colorReset} Configure DNS settings: ${colorDim}Point devices to this server's IP:53${colorReset}"
-    echo -e "   ${colorBlue}4.${colorReset} Start LazyDocker: ${colorDim}lazydocker${colorReset}"
-    echo -e "   ${colorBlue}5.${colorReset} Check Docker status: ${colorDim}docker ps${colorReset}"
+    echo -e "   ${colorBlue}1.${colorReset} Access SkyLab Dashboard: ${colorDim}http://localhost:8888${colorReset}"
+    echo -e "   ${colorBlue}2.${colorReset} Access Filebrowser: ${colorDim}http://localhost:8080 (admin/admin)${colorReset}"
+    echo -e "   ${colorBlue}3.${colorReset} Access AdGuard Home: ${colorDim}http://localhost:3000${colorReset}"
+    echo -e "   ${colorBlue}4.${colorReset} Configure DNS settings: ${colorDim}Point devices to this server's IP:53${colorReset}"
+    echo -e "   ${colorBlue}5.${colorReset} Start LazyDocker: ${colorDim}lazydocker${colorReset}"
+    echo -e "   ${colorBlue}6.${colorReset} Check Docker status: ${colorDim}docker ps${colorReset}"
     
     echo -e "\n${colorBold}${colorCyan}📚 USEFUL COMMANDS:${colorReset}"
     echo -e "   ${colorGreen}•${colorReset} ${colorDim}docker ps${colorReset} - List running containers"
     echo -e "   ${colorGreen}•${colorReset} ${colorDim}docker-compose up -d${colorReset} - Start services defined in docker-compose.yml"
     echo -e "   ${colorGreen}•${colorReset} ${colorDim}lazydocker${colorReset} - Open the Docker management UI"
     echo -e "   ${colorGreen}•${colorReset} ${colorDim}rclone config${colorReset} - Configure cloud storage connections"
+    echo -e "   ${colorGreen}•${colorReset} ${colorDim}http://localhost:8888${colorReset} - Access SkyLab homepage dashboard"
     echo -e "   ${colorGreen}•${colorReset} ${colorDim}http://localhost:8080${colorReset} - Access Filebrowser web interface"
     echo -e "   ${colorGreen}•${colorReset} ${colorDim}docker logs adguard${colorReset} - View AdGuard Home logs"
     echo -e "   ${colorGreen}•${colorReset} ${colorDim}http://localhost:3000${colorReset} - Access AdGuard Home web interface"
@@ -1701,7 +1793,7 @@ Step_Header 5 "Updating Package Repositories"
 Update_Package_Resource
 
 # Enhanced Installation with App Progress Tracking
-APPS_TO_INSTALL=("Dependencies" "Docker" "System-Config" "Rclone" "LazyDocker" "Watchtower" "Filebrowser" "AdGuard")
+APPS_TO_INSTALL=("Dependencies" "Docker" "System-Config" "Rclone" "LazyDocker" "Watchtower" "Filebrowser" "AdGuard" "Homepage")
 TOTAL_APPS=${#APPS_TO_INSTALL[@]}
 
 # Step 6: Install Dependencies
@@ -1757,8 +1849,14 @@ Show_App_Progress "AdGuard Home" 8 $TOTAL_APPS "installing"
 Install_AdGuard
 Show_App_Progress "AdGuard Home" 8 $TOTAL_APPS "success"
 
-# Step 14: Final System Health Check
-Step_Header 14 "Performing Final System Health Check"
+# Step 14: Install SkyLab Homepage
+Step_Header 14 "Installing SkyLab Homepage Dashboard"
+Show_App_Progress "Homepage Dashboard" 9 $TOTAL_APPS "installing"
+Install_Homepage
+Show_App_Progress "Homepage Dashboard" 9 $TOTAL_APPS "success"
+
+# Step 15: Final System Health Check
+Step_Header 15 "Performing Final System Health Check"
 Show 4 "Running post-installation health check..."
 if Perform_Health_Check; then
     Show 0 "✅ All systems operational and healthy!"
