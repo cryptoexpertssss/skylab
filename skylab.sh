@@ -1360,18 +1360,18 @@ Install_Filebrowser() {
   else
     # Create directories for Filebrowser with proper permissions
     Show 4 "Creating Filebrowser directories..."
-    ${sudo_cmd} mkdir -p /opt/filebrowser/config
-    ${sudo_cmd} mkdir -p /opt/filebrowser/data
+    ${sudo_cmd} mkdir -p /data/appdata/filebrowser/config
+    ${sudo_cmd} mkdir -p /data/appdata/filebrowser/data
     
     # Set proper ownership and permissions
-    ${sudo_cmd} chmod 755 /opt/filebrowser
-    ${sudo_cmd} chmod 755 /opt/filebrowser/config
-    ${sudo_cmd} chmod 755 /opt/filebrowser/data
+    ${sudo_cmd} chmod 755 /data/appdata/filebrowser
+    ${sudo_cmd} chmod 755 /data/appdata/filebrowser/config
+    ${sudo_cmd} chmod 755 /data/appdata/filebrowser/data
     
     # If not running as root, try to set ownership to current user
     if [[ $EUID -ne 0 ]] && [[ -n "$SUDO_USER" ]]; then
-      ${sudo_cmd} chown -R "$SUDO_USER:$SUDO_USER" /opt/filebrowser 2>/dev/null || {
-        Show 3 "Could not change ownership of /opt/filebrowser to $SUDO_USER"
+      ${sudo_cmd} chown -R "$SUDO_USER:$SUDO_USER" /data/appdata/filebrowser 2>/dev/null || {
+        Show 3 "Could not change ownership of /data/appdata/filebrowser to $SUDO_USER"
       }
     fi
     
@@ -1386,8 +1386,8 @@ Install_Filebrowser() {
       --name filebrowser \
       --restart unless-stopped \
       -p 8080:80 \
-      -v /opt/filebrowser/config:/config \
-      -v /opt/filebrowser/data:/srv \
+      -v /data/appdata/filebrowser/config:/config \
+      -v /data/appdata/filebrowser/data:/srv \
       -v /:/mnt/host:ro \
       filebrowser/filebrowser || {
       Show 1 "Filebrowser installation failed, please try again."
@@ -1413,9 +1413,9 @@ Install_AdGuard() {
     # Load configuration values with defaults
     local adguard_port=${ADGUARD_PORT:-3000}
     local adguard_dns_port=${ADGUARD_DNS_PORT:-53}
-    local adguard_data_dir=${ADGUARD_DATA_DIR:-/opt/adguard/data}
-    local adguard_config_dir=${ADGUARD_CONFIG_DIR:-/opt/adguard/config}
-    local adguard_work_dir=${ADGUARD_WORK_DIR:-/opt/adguard/work}
+    local adguard_data_dir=${ADGUARD_DATA_DIR:-/data/appdata/adguard/data}
+    local adguard_config_dir=${ADGUARD_CONFIG_DIR:-/data/appdata/adguard/config}
+    local adguard_work_dir=${ADGUARD_WORK_DIR:-/data/appdata/adguard/work}
     local adguard_version=${ADGUARD_VERSION:-latest}
     
     # Check if container already exists
@@ -1431,19 +1431,19 @@ Install_AdGuard() {
     else
         # Create directories with proper permissions
         Show 4 "Creating AdGuard Home directories..."
-        ${sudo_cmd} mkdir -p /opt/adguard
+        ${sudo_cmd} mkdir -p /data/appdata/adguard
         ${sudo_cmd} mkdir -p "$adguard_data_dir"
         ${sudo_cmd} mkdir -p "$adguard_config_dir"
         ${sudo_cmd} mkdir -p "$adguard_work_dir"
-        ${sudo_cmd} chmod 755 /opt/adguard
+        ${sudo_cmd} chmod 755 /data/appdata/adguard
         ${sudo_cmd} chmod 755 "$adguard_data_dir"
         ${sudo_cmd} chmod 755 "$adguard_config_dir"
         ${sudo_cmd} chmod 755 "$adguard_work_dir"
         
         # Set ownership if not root
         if [[ $EUID -ne 0 ]] && [[ -n "$SUDO_USER" ]]; then
-            ${sudo_cmd} chown -R "$SUDO_USER:$SUDO_USER" /opt/adguard 2>/dev/null || {
-                Show 3 "Could not change ownership of /opt/adguard to $SUDO_USER"
+            ${sudo_cmd} chown -R "$SUDO_USER:$SUDO_USER" /data/appdata/adguard 2>/dev/null || {
+                Show 3 "Could not change ownership of /data/appdata/adguard to $SUDO_USER"
             }
         fi
         

@@ -139,6 +139,9 @@ TIMEZONE=America/New_York
 PUID=1000
 PGID=1000
 
+# Data Directory Configuration
+APP_DATA_BASE_DIR=/data/appdata
+
 # Security
 PIHOLE_PASSWORD=secure_password_here
 FILEBROWSER_PASSWORD=secure_password_here
@@ -169,11 +172,38 @@ BACKUP_RETENTION_DAYS=30
 WATCHTOWER_SCHEDULE=0 0 4 * * *
 ```
 
+### Data Directory Structure
+
+All application data is stored under `/data/appdata/` by default:
+
+```
+/data/appdata/
+├── filebrowser/
+│   ├── config/          # Filebrowser configuration
+│   └── data/            # Filebrowser data files
+├── adguard/
+│   ├── config/          # AdGuard Home configuration
+│   ├── data/            # AdGuard Home data
+│   └── work/            # AdGuard Home working directory
+├── portainer/           # Portainer data
+├── nginx-proxy-manager/ # Nginx Proxy Manager data
+├── uptime-kuma/         # Uptime Kuma data
+├── pihole/
+│   ├── etc/             # Pi-hole configuration
+│   └── dnsmasq/         # Pi-hole DNS configuration
+├── heimdall/
+│   └── config/          # Heimdall configuration
+└── skylab/
+    ├── backups/         # System backups
+    └── repos/           # Local repositories
+```
+
 ### Customization
 
 1. **Edit `.env` file** to match your environment
-2. **Modify `docker-compose.yml`** for advanced configurations
-3. **Adjust service profiles** in the compose file
+2. **Modify `APP_DATA_BASE_DIR`** to change the data storage location
+3. **Modify `docker-compose.yml`** for advanced configurations
+4. **Adjust service profiles** in the compose file
 
 ## 🎭 Service Profiles
 

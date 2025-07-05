@@ -12,8 +12,8 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ./config/filebrowser:/config
-      - ./data/filebrowser:/srv
+      - /data/appdata/filebrowser/config:/config
+      - /data/appdata/filebrowser/data:/srv
       - /:/mnt/host:ro
     environment:
       - PUID=1000
@@ -34,8 +34,8 @@ services:
       - "1194:1194/udp"  # OpenVPN port
       - "8443:8080/tcp"   # Admin interface
     volumes:
-      - ./config/pivpn:/etc/openvpn
-      - ./data/pivpn/clients:/clients
+      - /data/appdata/pivpn/config:/etc/openvpn
+      - /data/appdata/pivpn/clients:/clients
     environment:
       - OPENVPN_OPTS=--config /etc/openvpn/server.conf
       - SERVER_NAME=${SERVER_IP:-auto}
@@ -72,7 +72,7 @@ services:
       - "9443:9443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./data/portainer:/data
+      - /data/appdata/portainer:/data
     networks:
       - skylab
 
@@ -86,8 +86,8 @@ services:
       - "443:443"   # HTTPS
       - "81:81"     # Admin interface
     volumes:
-      - ./data/nginx-proxy-manager:/data
-      - ./config/nginx-proxy-manager/letsencrypt:/etc/letsencrypt
+      - /data/appdata/nginx-proxy-manager:/data
+      - /data/appdata/nginx-proxy-manager/letsencrypt:/etc/letsencrypt
     environment:
       - DISABLE_IPV6=true
     networks:
@@ -103,7 +103,7 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      - ./data/uptime-kuma:/app/data
+      - /data/appdata/uptime-kuma:/app/data
     networks:
       - skylab
     profiles:
@@ -123,8 +123,8 @@ services:
       - WEBPASSWORD=admin123  # Change this!
       - FTLCONF_LOCAL_IPV4=${SERVER_IP:-192.168.1.100}
     volumes:
-      - ./data/pihole/etc:/etc/pihole
-      - ./data/pihole/dnsmasq:/etc/dnsmasq.d
+      - /data/appdata/pihole/etc:/etc/pihole
+      - /data/appdata/pihole/dnsmasq:/etc/dnsmasq.d
     dns:
       - 127.0.0.1
       - 8.8.8.8
@@ -146,7 +146,7 @@ services:
       - PGID=1000
       - TZ=UTC
     volumes:
-      - ./config/heimdall:/config
+      - /data/appdata/heimdall/config:/config
     networks:
       - skylab
     profiles:
