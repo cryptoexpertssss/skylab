@@ -211,8 +211,8 @@ colorReset='\033[0m'
 colorBold='\033[1m'
 colorDim='\033[2m'
 colorBlink='\033[5m'
-PROGRESS_CHAR="█"
-PROGRESS_EMPTY="░"
+PROGRESS_CHAR="#"
+PROGRESS_EMPTY="-"
 PROGRESS_WIDTH=50
 
 readonly GREEN_LINE=" ${aCOLOUR[0]}─────────────────────────────────────────────────────$COLOUR_RESET"
@@ -660,7 +660,7 @@ Update_Package_Resource() {
         fi
         
         ColorReset
-        ((retry_count++))
+        retry_count=$((retry_count + 1))
     done
     
     if [[ $update_success == true ]]; then
@@ -746,7 +746,7 @@ Install_Depends() {
             fi
             
             ColorReset
-            ((retry_count++))
+            retry_count=$((retry_count + 1))
         done
         
         if [[ $install_success == true ]]; then
