@@ -1,0 +1,183 @@
+version: '3.8'
+
+# SkyLab Container Stack
+# Complete home lab environment with all essential services
+
+services:
+  # Filebrowser - Web-based file management
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: filebrowser
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./config/filebrowser:/config
+      - ./data/filebrowser:/srv
+      - /:/mnt/host:ro
+    environment:
+      - PUID=1000
+      - PGID=1000
+    networks:
+      - skylab
+
+  # PiVPN - Containerized OpenVPN Server
+  pivpn:
+    image: dperson/openvpn:latest
+    container_name: pivpn
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    ports:
+      - "1194:1194/udp"  # OpenVPN port
+      - "8443:8080/tcp"   # Admin interface
+    volumes:
+      - ./config/pivpn:/etc/openvpn
+      - ./data/pivpn/clients:/clients
+    environment:
+      - OPENVPN_OPTS=--config /etc/openvpn/server.conf
+      - SERVER_NAME=${SERVER_IP:-auto}
+    command: >
+      -s "${SERVER_IP:-192.168.1.100}/24"
+      -r "8.8.8.8"
+      -r "8.8.4.4"
+      -d
+    networks:
+      - skylab
+
+  # Watchtower - Automatic container updates
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=86400  # Check daily
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      - WATCHTOWER_REVIVE_STOPPED=false
+    networks:
+      - skylab
+
+  # Portainer - Docker management UI (optional)
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data/portainer:/data
+    networks:
+      - skylab
+
+  # Nginx Proxy Manager - Reverse proxy with SSL (optional)
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - "80:80"     # HTTP
+      - "443:443"   # HTTPS
+      - "81:81"     # Admin interface
+    volumes:
+      - ./data/nginx-proxy-manager:/data
+      - ./config/nginx-proxy-manager/letsencrypt:/etc/letsencrypt
+    environment:
+      - DISABLE_IPV6=true
+    networks:
+      - skylab
+    profiles:
+      - proxy  # Only start with --profile proxy
+
+  # Uptime Kuma - Monitoring and status page (optional)
+  uptime-kuma:
+    image: louislam/uptime-kuma:latest
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./data/uptime-kuma:/app/data
+    networks:
+      - skylab
+    profiles:
+      - monitoring  # Only start with --profile monitoring
+
+  # Pi-hole - Network-wide ad blocking (optional)
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    restart: unless-stopped
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "8053:80/tcp"  # Web interface on port 8053 to avoid conflicts
+    environment:
+      - TZ=UTC
+      - WEBPASSWORD=admin123  # Change this!
+      - FTLCONF_LOCAL_IPV4=${SERVER_IP:-192.168.1.100}
+    volumes:
+      - ./data/pihole/etc:/etc/pihole
+      - ./data/pihole/dnsmasq:/etc/dnsmasq.d
+    dns:
+      - 127.0.0.1
+      - 8.8.8.8
+    networks:
+      - skylab
+    profiles:
+      - dns  # Only start with --profile dns
+
+  # Heimdall - Application dashboard (optional)
+  heimdall:
+    image: lscr.io/linuxserver/heimdall:latest
+    container_name: heimdall
+    restart: unless-stopped
+    ports:
+      - "8090:80"
+      - "8091:443"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+    volumes:
+      - ./config/heimdall:/config
+    networks:
+      - skylab
+    profiles:
+      - dashboard  # Only start with --profile dashboard
+
+networks:
+  skylab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  # Named volumes for persistent data
+  filebrowser_config:
+    driver: local
+  filebrowser_data:
+    driver: local
+  pivpn_config:
+    driver: local
+  pivpn_clients:
+    driver: local
+  portainer_data:
+    driver: local
+  nginx_data:
+    driver: local
+  uptime_kuma_data:
+    driver: local
+  pihole_etc:
+    driver: local
+  pihole_dnsmasq:
+    driver: local
+  heimdall_config:
+    driver: local
