@@ -1,1873 +1,2664 @@
-#!/usr/bin/bash
+#!/bin/bash
 
 ###############################################################################
-# ⭐ SkyLab - Advanced Home Lab Setup Orchestrator ⭐
-# 
-# An intelligent, interactive system setup script for home lab environments
-# Originally based on CasaOS installer but evolved for comprehensive lab setup
-# 
-# 🚀 This script will:
-# - Validate system requirements and compatibility
-# - Install and configure Docker with networking
-# - Set up USB auto-mounting capabilities
-# - Install essential tools (Rclone, LazyDocker, Watchtower)
-# - Configure regional optimizations
-# - Provide real-time progress tracking
-# 
-# 📋 Supported: Debian, Ubuntu, CentOS, Fedora, openSUSE, Arch Linux
-# 💾 Requirements: 1GB RAM, 5GB disk space, 64-bit architecture
-###############################################################################
-
-# Load configuration file
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$SCRIPT_DIR/skylab.conf"
-
-if [[ -f "$CONFIG_FILE" ]]; then
-    echo "Loading configuration from $CONFIG_FILE..."
-    source "$CONFIG_FILE"
-    
-    # Validate configuration
-    if declare -f validate_config >/dev/null; then
-        if ! validate_config; then
-            echo "Configuration validation failed. Please check $CONFIG_FILE"
-            exit 1
-        fi
-    fi
-else
-    echo "Warning: Configuration file not found at $CONFIG_FILE"
-    echo "Using default values..."
-    
-    # Default values if config file is missing
-    SCRIPT_NAME="SkyLab"
-    SCRIPT_VERSION="2.0.0"
-    MIN_MEMORY_GB=2
-    MIN_DISK_GB=10
-    RETRY_ATTEMPTS=3
-    RETRY_DELAY=5
-fi
-
-# Script Information (can be overridden by config)
-SCRIPT_NAME=${SCRIPT_NAME:-"SkyLab"}
-SCRIPT_VERSION=${SCRIPT_VERSION:-"2.0.0"}
-TOTAL_STEPS=15
+# 🚀 SkyLab Complete Installer
 #
-# Welcome Banner
-Welcome_Banner() {
-    clear
-    echo -e "${colorCyan}${colorBold}"
-    echo "    ███████╗██╗  ██╗██╗   ██╗██╗      █████╗ ██████╗ "
-    echo "    ██╔════╝██║ ██╔╝╚██╗ ██╔╝██║     ██╔══██╗██╔══██╗"
-    echo "    ███████╗█████╔╝  ╚████╔╝ ██║     ███████║██████╔╝"
-    echo "    ╚════██║██╔═██╗   ╚██╔╝  ██║     ██╔══██║██╔══██╗"
-    echo "    ███████║██║  ██╗   ██║   ███████╗██║  ██║██████╔╝"
-    echo "    ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚═════╝ "
-    echo -e "${colorReset}"
-    echo -e "    ${colorBold}${colorMagenta}⭐ Advanced Home Lab Setup Orchestrator ⭐${colorReset}"
-    echo -e "    ${colorDim}Version $SCRIPT_VERSION - Intelligent System Preparation${colorReset}"
-    echo ""
-    echo -e "    ${colorGreen}🚀 Features:${colorReset}"
-    echo -e "    ${colorDim}   • Docker & Container Management${colorReset}"
-    echo -e "    ${colorDim}   • USB Auto-mounting & Storage${colorReset}"
-    echo -e "    ${colorDim}   • Cloud Integration (Rclone)${colorReset}"
-    echo -e "    ${colorDim}   • Automated Updates (Watchtower)${colorReset}"
-    echo -e "    ${colorDim}   • Interactive Progress Tracking${colorReset}"
-    echo ""
-    echo -e "    ${colorYellow}⚡ Press ENTER to begin setup or Ctrl+C to cancel${colorReset}"
-    read -r
-    clear
-}
-
-###############################################################################
-# FUNCTIONS - Define functions before they are used                          #
+# Single script to install and configure the entire SkyLab stack
+# Includes: Docker, Services, Cloudflare Tunnel, Traefik, Authelia
+#
+# Usage: curl -sSL https://raw.githubusercontent.com/your-repo/skylab/main/skylab-installer.sh | bash
+# Or: wget -qO- https://raw.githubusercontent.com/your-repo/skylab/main/skylab-installer.sh | bash
 ###############################################################################
 
-# Enhanced printing function with logging
-Show() {
-    local level_num="$1"
-    local message="$2"
-    local timestamp=$(date '+%H:%M:%S')
-    local log_level
+# Enhanced error handling
+set -euo pipefail
 
-    # Map numeric levels to log levels
-    case $level_num in
-    0) log_level="SUCCESS" ;;
-    1) log_level="ERROR" ;;
-    2) log_level="INFO" ;;
-    3) log_level="WARNING" ;;
-    4) log_level="WORKING" ;;
-    5) log_level="DEBUG" ;;
-    *) log_level="INFO" ;;
-    esac
-
-    # Check if stdout is a terminal
-    if [[ -t 1 ]]; then
-        case $level_num in
-        0) echo -e "[${timestamp}] [\033[32m✓\033[0m] $message" ;;
-        1) echo -e "[${timestamp}] [\033[31m✗\033[0m] $message" ;;
-        2) echo -e "[${timestamp}] [\033[33m!\033[0m] $message" ;;
-        3) echo -e "[${timestamp}] [\033[33m⚠\033[0m] $message" ;;
-        4) echo -e "[${timestamp}] [\033[36m🔄\033[0m] $message" ;;
-        5) echo -e "[${timestamp}] [\033[35m🐛\033[0m] $message" ;;
-        *) echo -e "[${timestamp}] [\033[34mℹ\033[0m] $message" ;;
-        esac
-    else
-        case $level_num in
-        0) echo "[$timestamp] [OK] $message" ;;
-        1) echo "[$timestamp] [ERROR] $message" ;;
-        2) echo "[$timestamp] [INFO] $message" ;;
-        3) echo "[$timestamp] [WARNING] $message" ;;
-        4) echo "[$timestamp] [WORKING] $message" ;;
-        5) echo "[$timestamp] [DEBUG] $message" ;;
-        *) echo "[$timestamp] [INFO] $message" ;;
-        esac
-    fi
-}
-
-Welcome_Banner
-export PATH=/usr/sbin:$PATH
-export DEBIAN_FRONTEND=noninteractive
-
-set -e
-
-###############################################################################
-# GOLBALS                                                                     #
-###############################################################################
-
-# Check if running as root or with sudo privileges
-if [[ $EUID -eq 0 ]]; then
-sudo_cmd=""
-Show 3 "Running as root user. Some operations will be performed without sudo."
-else
-# Check if sudo is available and user has sudo privileges
-if command -v sudo >/dev/null 2>&1; then
-if sudo -n true 2>/dev/null; then
-sudo_cmd="sudo"
-Show 0 "Sudo privileges confirmed."
-else
-Show 1 "This script requires sudo privileges. Please run with sudo or as root."
-Show 2 "Usage: sudo $0"
-exit 1
-fi
-else
-Show 1 "Sudo is not installed and not running as root. Please install sudo or run as root."
-exit 1
-fi
-fi
-
-# shellcheck source=/dev/null
-source /etc/os-release
-
-# SYSTEM REQUIREMENTS
-readonly MINIMUM_DISK_SIZE_GB="5"
-readonly MINIMUM_MEMORY="400"
-readonly MINIMUM_DOCKER_VERSION="20"
-readonly SYSTEM_DEPANDS_PACKAGE=('wget' 'curl' 'smartmontools' 'parted' 'ntfs-3g' 'net-tools' 'udevil' 'samba' 'cifs-utils' 'mergerfs' 'unzip' 'screenfetch' 'btop')
-readonly SYSTEM_DEPANDS_COMMAND=('wget' 'curl' 'smartctl' 'parted' 'ntfs-3g' 'netstat' 'udevil' 'smbd' 'mount.cifs' 'mount.mergerfs' 'unzip' 'screenfetch' 'btop')
-
-# SYSTEM INFO
-PHYSICAL_MEMORY=$(LC_ALL=C free -m | awk '/Mem:/ { print $2 }')
-readonly PHYSICAL_MEMORY
-
-FREE_DISK_BYTES=$(LC_ALL=C df -P / | tail -n 1 | awk '{print $4}')
-readonly FREE_DISK_BYTES
-
-readonly FREE_DISK_GB=$((FREE_DISK_BYTES / 1024 / 1024))
-
-LSB_DIST=$( ([ -n "${ID_LIKE}" ] && echo "${ID_LIKE}") || ([ -n "${ID}" ] && echo "${ID}"))
-readonly LSB_DIST
-
-DIST=$(echo "${ID}")
-readonly DIST
-
-UNAME_M="$(uname -m)"
-readonly UNAME_M
-
-UNAME_U="$(uname -s)"
-readonly UNAME_U
-
-# REQUIREMENTS CONF PATH
-# Udevil
-readonly UDEVIL_CONF_PATH=/etc/udevil/udevil.conf
-readonly DEVMON_CONF_PATH=/etc/conf.d/devmon
-
-# COLORS
-readonly COLOUR_RESET='\e[0m'
-readonly aCOLOUR=(
-    '\e[38;5;154m' # green  	| Lines, bullets and separators
-    '\e[1m'        # Bold white	| Main descriptions
-    '\e[90m'       # Grey		| Credits
-    '\e[91m'       # Red		| Update notifications Alert
-    '\e[33m'       # Yellow		| Emphasis
-)
-
-# Enhanced Color Variables
-colorRed='\033[31m'
-colorGreen='\033[32m'
-colorYellow='\033[33m'
-colorBlue='\033[34m'
-colorMagenta='\033[35m'
-colorCyan='\033[36m'
-colorReset='\033[0m'
-colorBold='\033[1m'
-colorDim='\033[2m'
-colorBlink='\033[5m'
-PROGRESS_CHAR="#"
-PROGRESS_EMPTY="-"
-PROGRESS_WIDTH=50
-
-readonly GREEN_LINE=" ${aCOLOUR[0]}─────────────────────────────────────────────────────$COLOUR_RESET"
-readonly GREEN_BULLET=" ${aCOLOUR[0]}-$COLOUR_RESET"
-readonly GREEN_SEPARATOR="${aCOLOUR[0]}:$COLOUR_RESET"
-
-# VARIABLES
-REGION="UNKNOWN"
-
-trap 'onCtrlC' INT
-onCtrlC() {
-    echo -e "${COLOUR_RESET}"
-    exit 1
-}
-
-###############################################################################
-# Enhanced Logging and Error Handling                                         #
-###############################################################################
-
-# Log file configuration
-LOG_DIR="/var/log/skylab"
-LOG_FILE="$LOG_DIR/skylab-$(date +%Y%m%d-%H%M%S).log"
-ERROR_LOG="$LOG_DIR/skylab-errors.log"
-DEBUG_MODE=${DEBUG_MODE:-false}
-
-# Initialize logging
-Init_Logging() {
-    # Create log directory if it doesn't exist
-    ${sudo_cmd} mkdir -p "$LOG_DIR" 2>/dev/null || {
-        LOG_DIR="/tmp/skylab-logs"
-        LOG_FILE="$LOG_DIR/skylab-$(date +%Y%m%d-%H%M%S).log"
-        ERROR_LOG="$LOG_DIR/skylab-errors.log"
-        mkdir -p "$LOG_DIR"
-    }
-    
-    # Set proper permissions
-    ${sudo_cmd} chmod 755 "$LOG_DIR" 2>/dev/null || true
-    
-    # Initialize log files
-    echo "SkyLab Installation Log - $(date)" > "$LOG_FILE"
-    echo "System: $UNAME_U $UNAME_M" >> "$LOG_FILE"
-    echo "Distribution: $DIST" >> "$LOG_FILE"
-    echo "Memory: ${PHYSICAL_MEMORY}MB" >> "$LOG_FILE"
-    echo "Free Disk: ${FREE_DISK_GB}GB" >> "$LOG_FILE"
-    echo "----------------------------------------" >> "$LOG_FILE"
-}
-
-# Enhanced logging function
-Log_Message() {
-    local level="$1"
-    local message="$2"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local caller="${BASH_SOURCE[2]##*/}:${BASH_LINENO[1]}"
-    
-    # Log to file
-    echo "[$timestamp] [$level] [$caller] $message" >> "$LOG_FILE" 2>/dev/null || true
-    
-    # Log errors to separate error log
-    if [[ "$level" == "ERROR" || "$level" == "CRITICAL" ]]; then
-        echo "[$timestamp] [$level] [$caller] $message" >> "$ERROR_LOG" 2>/dev/null || true
-    fi
-    
-    # Debug logging
-    if [[ "$DEBUG_MODE" == "true" && "$level" == "DEBUG" ]]; then
-        echo "[$timestamp] [DEBUG] [$caller] $message" >> "$LOG_FILE" 2>/dev/null || true
-    fi
-}
+# Global variables for debugging and logging
+DEBUG=${DEBUG:-false}
+LOG_FILE="/tmp/skylab-installer-$(id -u).log"
+STEP_FILE="/tmp/skylab-step-$(id -u).txt"
 
 # Error handling function
-Handle_Error() {
+handle_error() {
     local exit_code=$?
     local line_number=$1
     local command="$2"
-    
-    Log_Message "ERROR" "Command failed with exit code $exit_code at line $line_number: $command"
-    Show 1 "Critical error occurred. Check log file: $LOG_FILE"
-    
-    # Cleanup on error
-    Cleanup_On_Error
+
+    echo ""
+    echo -e "${RED}❌ Installation failed at line $line_number${NC}"
+    echo -e "${RED}Command: $command${NC}"
+    echo -e "${RED}Exit code: $exit_code${NC}"
+    echo ""
+    echo -e "${YELLOW}🔍 Troubleshooting steps:${NC}"
+    echo -e "   1. Check the log file: ${CYAN}$LOG_FILE${NC}"
+    echo -e "   2. Verify system requirements and permissions"
+    echo -e "   3. Run with debug mode: ${CYAN}DEBUG=true ./skylab-installer.sh${NC}"
+    echo -e "   4. Check available disk space and memory"
+    echo ""
+    echo -e "${CYAN}💡 You can resume installation by running the script again${NC}"
+    echo -e "${CYAN}   The installer will detect existing components and continue${NC}"
+    echo ""
+
+    # Save current step for recovery
+    local recovery_file="/tmp/skylab-recovery-$(id -u).env"
+    echo "FAILED_AT_STEP=$(cat $STEP_FILE 2>/dev/null || echo 'unknown')" > "$recovery_file" 2>/dev/null || true
+    echo "FAILED_AT_LINE=$line_number" >> "$recovery_file" 2>/dev/null || true
+    echo "FAILED_COMMAND=$command" >> "$recovery_file" 2>/dev/null || true
+
     exit $exit_code
 }
 
-# Cleanup function for error scenarios
-Cleanup_On_Error() {
-    Log_Message "INFO" "Performing cleanup due to error..."
-    
-    # Stop any running Docker containers that might have been started
-    if command -v docker >/dev/null 2>&1; then
-        ${sudo_cmd} docker stop $(${sudo_cmd} docker ps -q) 2>/dev/null || true
+# Set up error trapping
+trap 'handle_error $LINENO "$BASH_COMMAND"' ERR
+
+# Logging function
+log() {
+    local level="$1"
+    shift
+    local message="$*"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+    # Try to write to log file, but don't fail if we can't
+    if ! echo "[$timestamp] [$level] $message" >> "$LOG_FILE" 2>/dev/null; then
+        # If we can't write to the log file, try to create it with proper permissions
+        if ! touch "$LOG_FILE" 2>/dev/null; then
+            # If we still can't create it, use a fallback location
+            LOG_FILE="$HOME/skylab-installer.log"
+            echo "[$timestamp] [$level] $message" >> "$LOG_FILE" 2>/dev/null || true
+        else
+            echo "[$timestamp] [$level] $message" >> "$LOG_FILE" 2>/dev/null || true
+        fi
     fi
-    
-    # Remove temporary files
-    rm -f /tmp/skylab-* 2>/dev/null || true
-    
-    Log_Message "INFO" "Cleanup completed"
+
+    if [[ "$DEBUG" == "true" ]]; then
+        echo -e "${CYAN}[DEBUG]${NC} $message" >&2
+    fi
 }
 
-# Set error trap
-set -eE
-trap 'Handle_Error $LINENO "$BASH_COMMAND"' ERR
+# Enhanced print functions with logging
+print_step() {
+    echo "$1" > "$STEP_FILE" 2>/dev/null || true
+    log "INFO" "STEP: $1"
+    echo ""
+    echo -e "${BOLD}${BLUE}🔧 $1${NC}"
+    echo ""
+}
 
-# Note: Show function moved to top of file to fix execution order
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m' # No Color
+BOLD='\033[1m'
 
-# Enhanced Progress Bar Function with App-level Progress
-Show_Progress() {
+# Global variables
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_DIR="/opt/skylab"
+DATA_DIR="/data"
+DOMAIN=""
+CF_EMAIL=""
+CF_API_KEY=""
+INSTALL_TYPE=""
+
+# Function to print colored output
+print_banner() {
+    clear
+    echo ""
+    echo -e "${BOLD}${CYAN}┌─────────────────────────────────────────┐${NC}"
+    echo -e "${BOLD}${CYAN}│                                         │${NC}"
+    echo -e "${BOLD}${CYAN}│           🚀 ${WHITE}SkyLab Setup${CYAN} 🚀           │${NC}"
+    echo -e "${BOLD}${CYAN}│                                         │${NC}"
+    echo -e "${BOLD}${CYAN}│      ${WHITE}Complete Home Lab Installer${CYAN}      │${NC}"
+    echo -e "${BOLD}${CYAN}│                                         │${NC}"
+    echo -e "${BOLD}${CYAN}└─────────────────────────────────────────┘${NC}"
+    echo ""
+
+    # Show recovery info if available
+    local recovery_file="/tmp/skylab-recovery-$(id -u).env"
+    if [[ -f "$recovery_file" ]]; then
+        source "$recovery_file" 2>/dev/null || true
+        echo -e "${YELLOW}🔄 Recovery Mode Detected${NC}"
+        echo -e "   Previous installation failed at: ${CYAN}${FAILED_AT_STEP:-unknown step}${NC}"
+        echo -e "   The installer will attempt to resume from where it left off"
+        echo ""
+    fi
+}
+
+print_status() {
+    log "INFO" "$1"
+    echo -e "   ${BLUE}ℹ${NC}  $1"
+}
+
+print_success() {
+    log "SUCCESS" "$1"
+    echo -e "   ${GREEN}✅${NC} $1"
+}
+
+print_warning() {
+    log "WARNING" "$1"
+    echo -e "   ${YELLOW}⚠️${NC}  $1"
+}
+
+print_error() {
+    log "ERROR" "$1"
+    echo -e "   ${RED}❌${NC} $1"
+}
+
+print_step() {
+    echo ""
+    echo -e "${BOLD}${CYAN}🔧 $1${NC}"
+    echo ""
+}
+
+# Prerequisites checking function
+check_prerequisites() {
+    print_step "Checking System Prerequisites"
+
+    local errors=0
+
+    # Check available disk space (minimum 10GB)
+    local available_space=$(df / | awk 'NR==2 {print $4}')
+    local required_space=10485760  # 10GB in KB
+
+    if [[ $available_space -lt $required_space ]]; then
+        print_error "Insufficient disk space. Required: 10GB, Available: $(($available_space/1024/1024))GB"
+        ((errors++))
+    else
+        print_success "Disk space check passed ($(($available_space/1024/1024))GB available)"
+    fi
+
+    # Check available memory (minimum 2GB)
+    local available_memory=$(free -m | awk 'NR==2{print $7}')
+    if [[ $available_memory -lt 2048 ]]; then
+        print_warning "Low available memory. Recommended: 2GB+, Available: ${available_memory}MB"
+        print_status "Installation will continue but performance may be affected"
+    else
+        print_success "Memory check passed (${available_memory}MB available)"
+    fi
+
+    # Check internet connectivity
+    if ! ping -c 1 google.com >/dev/null 2>&1; then
+        print_error "No internet connection detected"
+        print_status "Internet connection is required to download Docker images and packages"
+        ((errors++))
+    else
+        print_success "Internet connectivity verified"
+    fi
+
+    # Check if ports are available
+    local ports_to_check=(53 80 443 8080 9000)
+    local port_conflicts=()
+
+    for port in "${ports_to_check[@]}"; do
+        if netstat -tuln 2>/dev/null | grep -q ":$port "; then
+            port_conflicts+=($port)
+        fi
+    done
+
+    if [[ ${#port_conflicts[@]} -gt 0 ]]; then
+        print_warning "Port conflicts detected: ${port_conflicts[*]}"
+        print_status "The installer will attempt to resolve these conflicts automatically"
+    else
+        print_success "No port conflicts detected"
+    fi
+
+    if [[ $errors -gt 0 ]]; then
+        print_error "Prerequisites check failed with $errors critical errors"
+        print_status "Please resolve the above issues before continuing"
+        exit 1
+    fi
+
+    print_success "All prerequisites checks passed"
+}
+
+# Check for existing installation and offer recovery
+check_existing_installation() {
+    if [[ -f "$INSTALL_DIR/.env" ]] || [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
+        print_warning "Existing SkyLab installation detected"
+        echo -e "   Installation directory: ${CYAN}$INSTALL_DIR${NC}"
+        echo -e "   Data directory: ${CYAN}$DATA_DIR/appdata${NC}"
+        echo ""
+
+        while true; do
+            echo -e "${YELLOW}What would you like to do?${NC}"
+            echo -e "   ${GREEN}1)${NC} Continue and update existing installation"
+            echo -e "   ${YELLOW}2)${NC} Backup existing and start fresh"
+            echo -e "   ${RED}3)${NC} Exit and manually resolve"
+            echo ""
+            read -p "Enter your choice [1-3]: " choice
+
+            case $choice in
+                1)
+                    print_success "Continuing with existing installation update"
+                    return 0
+                    ;;
+                2)
+                    print_status "Creating backup of existing installation..."
+                    local backup_dir="/tmp/skylab-backup-$(date +%Y%m%d-%H%M%S)"
+                    mkdir -p "$backup_dir"
+
+                    if [[ -d "$INSTALL_DIR" ]]; then
+                        cp -r "$INSTALL_DIR" "$backup_dir/"
+                    fi
+                    if [[ -d "$DATA_DIR/appdata" ]]; then
+                        cp -r "$DATA_DIR/appdata" "$backup_dir/"
+                    fi
+
+                    print_success "Backup created at: $backup_dir"
+                    print_status "Removing existing installation..."
+                    sudo rm -rf "$INSTALL_DIR" "$DATA_DIR/appdata"
+                    return 0
+                    ;;
+                3)
+                    print_status "Installation cancelled by user"
+                    echo -e "   To manually resolve:"
+                    echo -e "   • Remove: ${CYAN}$INSTALL_DIR${NC}"
+                    echo -e "   • Remove: ${CYAN}$DATA_DIR/appdata${NC}"
+                    echo -e "   • Or backup and move these directories"
+                    exit 0
+                    ;;
+                *)
+                    print_warning "Please enter 1, 2, or 3"
+                    ;;
+            esac
+        done
+    fi
+}
+
+# Welcome message
+show_welcome() {
+    echo -e "${BOLD}${GREEN}Welcome to SkyLab! 🎉${NC}"
+    echo ""
+    echo -e "This installer will set up a complete home lab with:"
+    echo -e "• File management, VPN server, DNS ad-blocking"
+    echo -e "• Docker container management and auto-updates"
+    echo -e "• Optional external access and monitoring"
+    echo ""
+    echo -e "${CYAN}Let's get started!${NC}"
+    echo ""
+}
+
+# Check if running as root
+check_root() {
+    if [[ $EUID -eq 0 ]]; then
+        print_error "This script should not be run as root"
+        print_status "Please run as a regular user with sudo privileges"
+        exit 1
+    fi
+    
+    if ! sudo -n true 2>/dev/null; then
+        print_warning "This script requires sudo privileges"
+        print_status "You may be prompted for your password"
+    fi
+}
+
+# Detect OS and architecture
+detect_system() {
+    print_step "Detecting System"
+    
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    ARCH=$(uname -m)
+    
+    case $ARCH in
+        x86_64) ARCH="amd64" ;;
+        aarch64|arm64) ARCH="arm64" ;;
+        armv7l) ARCH="arm" ;;
+        *) print_error "Unsupported architecture: $ARCH"; exit 1 ;;
+    esac
+    
+    print_status "OS: $OS"
+    print_status "Architecture: $ARCH"
+    
+    # Check if supported OS
+    case $OS in
+        linux)
+            if command -v apt-get >/dev/null 2>&1; then
+                PKG_MANAGER="apt"
+                INSTALL_CMD="apt-get install -y"
+                UPDATE_CMD="apt-get update"
+            elif command -v yum >/dev/null 2>&1; then
+                PKG_MANAGER="yum"
+                INSTALL_CMD="yum install -y"
+                UPDATE_CMD="yum update"
+            elif command -v dnf >/dev/null 2>&1; then
+                PKG_MANAGER="dnf"
+                INSTALL_CMD="dnf install -y"
+                UPDATE_CMD="dnf update"
+            else
+                print_error "Unsupported package manager"
+                exit 1
+            fi
+            ;;
+        *)
+            print_error "Unsupported operating system: $OS"
+            exit 1
+            ;;
+    esac
+    
+    print_success "System detection completed"
+}
+
+# Show detailed service explanations
+show_service_overview() {
+    echo -e "${BOLD}${CYAN}📦 What will be installed:${NC}"
+    echo ""
+    echo -e "  ${GREEN}✓${NC} ${BOLD}File Manager${NC} - Access files from web browser"
+    echo -e "  ${GREEN}✓${NC} ${BOLD}VPN Server${NC} - Secure remote access to your network"
+    echo -e "  ${GREEN}✓${NC} ${BOLD}Ad Blocker${NC} - Block ads for all devices on your network"
+    echo -e "  ${GREEN}✓${NC} ${BOLD}Docker Manager${NC} - Easy container management interface"
+    echo -e "  ${GREEN}✓${NC} ${BOLD}Auto-Updater${NC} - Keeps everything up to date"
+    echo ""
+}
+
+show_detailed_services() {
+    clear
+    print_banner
+    echo -e "${BOLD}${CYAN}📋 Detailed Service Information${NC}"
+    echo ""
+
+    echo -e "${BOLD}� CORE SERVICES:${NC}"
+    echo ""
+    echo -e "  ${CYAN}📁 Filebrowser${NC} - Web file manager (Port 8080)"
+    echo -e "  ${CYAN}🔒 PiVPN${NC} - OpenVPN server (Port 1194/8443)"
+    echo -e "  ${CYAN}🛡️ AdGuard Home${NC} - DNS ad blocker (Port 3000/53)"
+    echo -e "  ${CYAN}🐳 Portainer${NC} - Docker management (Port 9000)"
+    echo -e "  ${CYAN}🔄 Watchtower${NC} - Auto-updater (Background)"
+    echo ""
+
+    echo -e "${BOLD}🌐 OPTIONAL SERVICES:${NC}"
+    echo ""
+    echo -e "  ${YELLOW}🚦 Traefik${NC} - Reverse proxy with auto-SSL"
+    echo -e "  ${YELLOW}🔐 Authelia${NC} - 2FA authentication for all services"
+    echo -e "  ${YELLOW}☁️ Cloudflare Tunnel${NC} - Secure external access"
+    echo -e "  ${YELLOW}📊 Uptime Kuma${NC} - Service monitoring & alerts"
+    echo -e "  ${YELLOW}🏠 Heimdall${NC} - Beautiful application dashboard"
+    echo ""
+
+    read -p "Press Enter to return to installation options..."
+}
+
+# Show installation menu
+show_menu() {
+    clear
+    print_banner
+
+    show_service_overview
+
+    echo -e "${BOLD}${CYAN}🎯 Choose Installation Type:${NC}"
+    echo ""
+
+    echo -e "  ${GREEN}1)${NC} ${BOLD}🏠 Local Only${NC}"
+    echo -e "     ${CYAN}→${NC} Core services for home network use"
+    echo -e "     ${CYAN}→${NC} Access via local IP addresses (192.168.x.x:port)"
+    echo -e "     ${CYAN}→${NC} No domain or external setup required"
+    echo ""
+
+    echo -e "  ${GREEN}2)${NC} ${BOLD}☁️ Cloudflare Tunnel${NC}"
+    echo -e "     ${CYAN}→${NC} Secure external access via Cloudflare"
+    echo -e "     ${CYAN}→${NC} Access via custom domains (files.yourdomain.com)"
+    echo -e "     ${CYAN}→${NC} Requires: Domain name + Cloudflare account (free)"
+    echo ""
+
+    echo -e "  ${GREEN}3)${NC} ${BOLD}🌐 Port Forward${NC}"
+    echo -e "     ${CYAN}→${NC} Traditional external access via router"
+    echo -e "     ${CYAN}→${NC} Access via custom domains with router setup"
+    echo -e "     ${CYAN}→${NC} Requires: Domain name + router configuration"
+    echo ""
+
+    echo -e "  ${YELLOW}4)${NC} ${BOLD}ℹ️ Show Detailed Service Info${NC}"
+    echo -e "  ${RED}5)${NC} ${BOLD}❌ Exit${NC}"
+    echo ""
+
+    while true; do
+        read -p "Enter your choice [1-5]: " choice
+        case $choice in
+            1)
+                INSTALL_TYPE="local"
+                print_success "Selected: Local Only installation"
+                confirm_local_installation
+                break
+                ;;
+            2)
+                INSTALL_TYPE="cloudflare"
+                print_success "Selected: Cloudflare Tunnel installation"
+                explain_cloudflare_requirements
+                collect_cloudflare_info
+                break
+                ;;
+            3)
+                INSTALL_TYPE="portforward"
+                print_success "Selected: Port Forward installation"
+                explain_portforward_requirements
+                collect_domain_info
+                break
+                ;;
+            4)
+                show_detailed_services
+                show_menu
+                return
+                ;;
+            5)
+                print_status "Installation cancelled"
+                exit 0
+                ;;
+            *)
+                print_warning "Invalid option. Please choose 1-5."
+                ;;
+        esac
+    done
+}
+
+# Confirm local installation
+confirm_local_installation() {
+    print_step "Local Installation Confirmation"
+
+    echo -e "${BOLD}You've selected Local Only installation.${NC}"
+    echo ""
+    echo -e "${GREEN}✅ What will be installed:${NC}"
+    echo -e "   • Filebrowser (File management)"
+    echo -e "   • PiVPN (VPN server)"
+    echo -e "   • AdGuard Home (DNS ad-blocking)"
+    echo -e "   • Portainer (Docker management)"
+    echo -e "   • Watchtower (Auto-updates)"
+    echo ""
+    echo -e "${YELLOW}📍 Access URLs after installation:${NC}"
+    echo -e "   • Files: http://your-server-ip:8080"
+    echo -e "   • VPN Admin: http://your-server-ip:8443"
+    echo -e "   • AdGuard: http://your-server-ip:3000"
+    echo -e "   • Portainer: http://your-server-ip:9000"
+    echo ""
+    echo -e "${CYAN}💡 Perfect for:${NC}"
+    echo -e "   • Home users who access services locally"
+    echo -e "   • Users who don't need external access"
+    echo -e "   • Quick setup without domain configuration"
+    echo ""
+
+    while true; do
+        read -p "Continue with Local Only installation? [y/N]: " confirm
+        case $confirm in
+            [Yy]*)
+                print_success "Proceeding with Local Only installation"
+                break
+                ;;
+            [Nn]*|"")
+                print_status "Returning to main menu..."
+                show_menu
+                return
+                ;;
+            *)
+                print_warning "Please answer yes (y) or no (n)"
+                ;;
+        esac
+    done
+}
+
+# Explain Cloudflare requirements
+explain_cloudflare_requirements() {
+    print_step "Cloudflare Tunnel Requirements"
+
+    echo -e "${BOLD}${CYAN}What you need for Cloudflare Tunnel:${NC}"
+    echo ""
+    echo -e "${YELLOW}1. Domain Name${NC}"
+    echo -e "   • Any domain you own (example.com, mydomain.net, etc.)"
+    echo -e "   • Can be from any registrar (GoDaddy, Namecheap, etc.)"
+    echo -e "   • Will be used for subdomains (files.yourdomain.com)"
+    echo ""
+    echo -e "${YELLOW}2. Cloudflare Account${NC}"
+    echo -e "   • Free account at cloudflare.com"
+    echo -e "   • Add your domain to Cloudflare"
+    echo -e "   • Change nameservers to Cloudflare's"
+    echo ""
+    echo -e "${YELLOW}3. Cloudflare API Token${NC}"
+    echo -e "   • Go to Cloudflare Dashboard → My Profile → API Tokens"
+    echo -e "   • Create token with Zone:DNS:Edit permissions"
+    echo -e "   • Copy the token (starts with letters/numbers)"
+    echo ""
+    echo -e "${GREEN}✅ Benefits you'll get:${NC}"
+    echo -e "   • Access services from anywhere: files.yourdomain.com"
+    echo -e "   • Automatic HTTPS certificates"
+    echo -e "   • 2FA protection on all services"
+    echo -e "   • No port forwarding needed"
+    echo -e "   • DDoS protection from Cloudflare"
+    echo -e "   • Faster loading via Cloudflare's global network"
+    echo ""
+    echo -e "${MAGENTA}💰 Cost Savings:${NC}"
+    echo -e "   • Replaces AWS (\$5-20/month) → \$0/month"
+    echo -e "   • Better than Twingate (limited free tier)"
+    echo ""
+
+    while true; do
+        read -p "Do you have a domain and Cloudflare account ready? [y/N]: " ready
+        case $ready in
+            [Yy]*)
+                print_success "Great! Let's configure Cloudflare Tunnel"
+                break
+                ;;
+            [Nn]*|"")
+                echo ""
+                echo -e "${YELLOW}📋 Setup Steps:${NC}"
+                echo -e "1. Buy a domain (or use existing one)"
+                echo -e "2. Create free Cloudflare account"
+                echo -e "3. Add domain to Cloudflare"
+                echo -e "4. Update nameservers at your registrar"
+                echo -e "5. Create API token in Cloudflare dashboard"
+                echo -e "6. Run this installer again"
+                echo ""
+                print_status "Come back when you're ready!"
+                exit 0
+                ;;
+            *)
+                print_warning "Please answer yes (y) or no (n)"
+                ;;
+        esac
+    done
+}
+
+# Explain port forward requirements
+explain_portforward_requirements() {
+    print_step "Port Forward Requirements"
+
+    echo -e "${BOLD}${CYAN}What you need for Port Forward setup:${NC}"
+    echo ""
+    echo -e "${YELLOW}1. Router Access${NC}"
+    echo -e "   • Admin access to your home router"
+    echo -e "   • Ability to configure port forwarding"
+    echo -e "   • Forward ports 80 and 443 to your server"
+    echo ""
+    echo -e "${YELLOW}2. Static IP or Dynamic DNS${NC}"
+    echo -e "   • Static public IP (best option)"
+    echo -e "   • OR dynamic DNS service (DuckDNS, No-IP, etc.)"
+    echo -e "   • Domain name (optional but recommended)"
+    echo ""
+    echo -e "${GREEN}✅ Benefits you'll get:${NC}"
+    echo -e "   • Direct access to your server"
+    echo -e "   • Full control over traffic routing"
+    echo -e "   • HTTPS with automatic certificates"
+    echo -e "   • 2FA protection on all services"
+    echo ""
+    echo -e "${RED}⚠️ Security Considerations:${NC}"
+    echo -e "   • Your home IP will be exposed"
+    echo -e "   • Need to keep services updated"
+    echo -e "   • Consider firewall rules"
+    echo ""
+
+    while true; do
+        read -p "Do you have router access and understand the requirements? [y/N]: " ready
+        case $ready in
+            [Yy]*)
+                print_success "Great! Let's configure port forwarding setup"
+                break
+                ;;
+            [Nn]*|"")
+                echo ""
+                echo -e "${YELLOW}📋 Setup Steps:${NC}"
+                echo -e "1. Access your router admin panel"
+                echo -e "2. Find port forwarding settings"
+                echo -e "3. Forward port 80 → your-server-ip:80"
+                echo -e "4. Forward port 443 → your-server-ip:443"
+                echo -e "5. Set up dynamic DNS if needed"
+                echo -e "6. Run this installer again"
+                echo ""
+                print_status "Come back when you're ready!"
+                exit 0
+                ;;
+            *)
+                print_warning "Please answer yes (y) or no (n)"
+                ;;
+        esac
+    done
+}
+
+# Input validation functions
+validate_domain() {
+    local domain="$1"
+    if [[ ! "$domain" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
+        return 1
+    fi
+    return 0
+}
+
+validate_email() {
+    local email="$1"
+    if [[ ! "$email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+        return 1
+    fi
+    return 0
+}
+
+validate_ip() {
+    local ip="$1"
+    if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        return 1
+    fi
+
+    # Check each octet is valid (0-255)
+    IFS='.' read -ra ADDR <<< "$ip"
+    for i in "${ADDR[@]}"; do
+        if [[ $i -gt 255 ]]; then
+            return 1
+        fi
+    done
+    return 0
+}
+
+validate_api_token() {
+    local token="$1"
+    if [[ ${#token} -lt 20 ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Enhanced input collection with validation
+get_validated_input() {
+    local prompt="$1"
+    local validation_func="$2"
+    local error_msg="$3"
+    local value=""
+
+    while [[ -z "$value" ]]; do
+        read -p "$prompt" value
+        if ! $validation_func "$value"; then
+            print_warning "$error_msg"
+            value=""
+        fi
+    done
+    echo "$value"
+}
+
+# Collect Cloudflare information
+collect_cloudflare_info() {
+    print_step "Cloudflare Configuration"
+
+    echo -e "${BOLD}Let's configure your Cloudflare settings:${NC}"
+    echo ""
+
+    # Domain collection with validation and examples
+    echo -e "${YELLOW}📍 Step 1: Domain Name${NC}"
+    echo -e "Enter the domain you've added to Cloudflare"
+    echo -e "${CYAN}Examples:${NC} example.com, mydomain.net, homelab.org"
+    echo ""
+
+    while [[ -z "$DOMAIN" ]]; do
+        DOMAIN=$(get_validated_input "Your domain name: " validate_domain "Invalid domain format. Please enter just the domain (e.g., example.com)")
+
+        echo -e "${GREEN}✅ Domain: $DOMAIN${NC}"
+        echo -e "${CYAN}Your services will be available at:${NC}"
+        echo -e "   • files.$DOMAIN"
+        echo -e "   • portainer.$DOMAIN"
+        echo -e "   • auth.$DOMAIN"
+        echo ""
+        while true; do
+            read -p "Is this correct? [Y/n]: " confirm
+            case $confirm in
+                [Nn]*)
+                    DOMAIN=""
+                    break
+                    ;;
+                [Yy]*|"")
+                    break
+                    ;;
+                *)
+                    print_warning "Please answer yes (y) or no (n)"
+                    ;;
+            esac
+        done
+    done
+
+    # Email collection
+    echo -e "${YELLOW}📍 Step 2: Cloudflare Email${NC}"
+    echo -e "Enter the email address you use to log into Cloudflare"
+    echo ""
+
+    CF_EMAIL=$(get_validated_input "Cloudflare email: " validate_email "Invalid email format. Please try again.")
+    echo -e "${GREEN}✅ Email: $CF_EMAIL${NC}"
+
+    # API Token collection with detailed instructions
+    echo -e "${YELLOW}📍 Step 3: Cloudflare API Token${NC}"
+    echo -e "This token allows SkyLab to manage DNS records for your domain"
+    echo ""
+    echo -e "${CYAN}How to get your API token:${NC}"
+    echo -e "1. Go to: https://dash.cloudflare.com/profile/api-tokens"
+    echo -e "2. Click 'Create Token'"
+    echo -e "3. Use 'Custom token' template"
+    echo -e "4. Set permissions:"
+    echo -e "   • Zone:Zone:Read"
+    echo -e "   • Zone:DNS:Edit"
+    echo -e "5. Zone Resources: Include - All zones"
+    echo -e "6. Click 'Continue to summary' → 'Create Token'"
+    echo -e "7. Copy the token (it starts with letters and numbers)"
+    echo ""
+    echo -e "${RED}⚠️ Keep this token secure - it has access to your DNS!${NC}"
+    echo ""
+
+    while [[ -z "$CF_API_KEY" ]]; do
+        read -s -p "Paste your Cloudflare API token: " CF_API_KEY
+        echo ""
+        if [[ ${#CF_API_KEY} -lt 20 ]]; then
+            print_warning "API token seems too short. Please check and try again."
+            print_status "Token should be 40+ characters long"
+            CF_API_KEY=""
+        else
+            echo -e "${GREEN}✅ API token received (${#CF_API_KEY} characters)${NC}"
+
+            # Test the token
+            print_status "Testing API token..."
+            local test_result=$(curl -s -H "Authorization: Bearer $CF_API_KEY" \
+                "https://api.cloudflare.com/client/v4/user/tokens/verify" | \
+                grep -o '"success":[^,]*' | cut -d':' -f2)
+
+            if [[ "$test_result" == "true" ]]; then
+                print_success "API token is valid!"
+            else
+                print_warning "API token test failed, but continuing anyway"
+                print_status "You can fix this later if needed"
+            fi
+        fi
+    done
+
+    echo ""
+    print_success "Cloudflare configuration completed!"
+    echo -e "${CYAN}Summary:${NC}"
+    echo -e "   • Domain: $DOMAIN"
+    echo -e "   • Email: $CF_EMAIL"
+    echo -e "   • API Token: ✅ Configured"
+}
+
+# Collect domain information for port forward setup
+collect_domain_info() {
+    print_step "Domain Configuration"
+    
+    read -p "Enter your domain name (optional, press Enter to skip): " DOMAIN
+    if [[ -n "$DOMAIN" && ! "$DOMAIN" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
+        print_warning "Invalid domain format. Continuing without domain."
+        DOMAIN=""
+    fi
+}
+
+# Install system dependencies
+install_dependencies() {
+    print_step "Installing System Dependencies"
+
+    echo -e "${CYAN}Installing essential tools for SkyLab:${NC}"
+    echo -e "   • curl & wget - Download files and communicate with APIs"
+    echo -e "   • git - Version control (for future updates)"
+    echo -e "   • unzip - Extract downloaded packages"
+    echo -e "   • jq - Process JSON data from APIs"
+    echo -e "   • openssl - Generate security certificates and keys"
+    echo ""
+
+    print_status "Updating package manager..."
+    sudo $UPDATE_CMD >/dev/null 2>&1
+
+    local packages="curl wget git unzip jq openssl"
+
+    print_status "Installing required packages..."
+    sudo $INSTALL_CMD $packages >/dev/null 2>&1
+
+    print_success "System dependencies installed"
+}
+
+# Install Docker
+install_docker() {
+    print_step "Installing Docker"
+
+    echo -e "${CYAN}Docker is the foundation of SkyLab:${NC}"
+    echo -e "   • Containers - Isolated environments for each service"
+    echo -e "   • Images - Pre-built software packages"
+    echo -e "   • Networks - Secure communication between services"
+    echo -e "   • Volumes - Persistent data storage"
+    echo ""
+
+    if command -v docker >/dev/null 2>&1; then
+        print_status "Docker already installed"
+        local docker_version=$(docker --version | cut -d' ' -f3 | cut -d',' -f1)
+        print_success "Docker version: $docker_version"
+        return
+    fi
+
+    print_status "Downloading Docker installation script..."
+
+    # Download with progress bar
+    if curl --progress-bar -fsSL https://get.docker.com -o /tmp/get-docker.sh; then
+        print_success "Docker script downloaded"
+    else
+        print_error "Failed to download Docker installation script"
+        exit 1
+    fi
+
+    print_status "Installing Docker (this may take 2-5 minutes)..."
+    print_status "Please wait while Docker is being installed..."
+
+    # Run installation with some progress feedback
+    {
+        timeout 300 sh /tmp/get-docker.sh 2>&1 | while IFS= read -r line; do
+            case "$line" in
+                *"Downloading"*|*"Installing"*|*"Configuring"*|*"Starting"*)
+                    print_status "$(echo "$line" | sed 's/^[[:space:]]*//')"
+                    ;;
+                *"ERROR"*|*"FATAL"*)
+                    print_error "$(echo "$line" | sed 's/^[[:space:]]*//')"
+                    ;;
+            esac
+        done
+        echo "DOCKER_INSTALL_COMPLETE"
+    } &
+
+    # Show a simple progress indicator while Docker installs
+    local pid=$!
+    local spin='-\|/'
+    local i=0
+    while kill -0 $pid 2>/dev/null; do
+        i=$(( (i+1) %4 ))
+        printf "\r   ${BLUE}ℹ${NC}  Installing Docker... ${spin:$i:1}"
+        sleep 0.5
+    done
+    printf "\r   ${BLUE}ℹ${NC}  Installing Docker... ✓\n"
+
+    wait $pid
+    rm -f /tmp/get-docker.sh
+
+    print_status "Configuring Docker permissions..."
+    print_status "Adding your user to the docker group for non-root access"
+    sudo usermod -aG docker $USER
+
+    print_status "Starting Docker service..."
+    sudo systemctl enable docker >/dev/null 2>&1
+    sudo systemctl start docker >/dev/null 2>&1
+
+    # Verify Docker installation
+    if docker --version >/dev/null 2>&1; then
+        local docker_version=$(docker --version | cut -d' ' -f3 | cut -d',' -f1)
+        print_success "Docker installed successfully (version: $docker_version)"
+    else
+        print_error "Docker installation failed"
+        exit 1
+    fi
+
+    print_warning "Note: You may need to log out and back in for Docker permissions to take effect"
+    print_status "For now, we'll use sudo for Docker commands during installation"
+}
+
+# Install Docker Compose
+install_docker_compose() {
+    print_step "Installing Docker Compose"
+
+    echo -e "${CYAN}Docker Compose orchestrates multiple containers:${NC}"
+    echo -e "   • Defines all SkyLab services in one file"
+    echo -e "   • Manages service dependencies and startup order"
+    echo -e "   • Creates networks for secure service communication"
+    echo -e "   • Handles volume mounting for data persistence"
+    echo ""
+
+    if command -v docker-compose >/dev/null 2>&1; then
+        local compose_version=$(docker-compose --version | cut -d' ' -f3 | cut -d',' -f1)
+        print_status "Docker Compose already installed (version: $compose_version)"
+        return
+    fi
+
+    print_status "Getting latest Docker Compose version..."
+    local compose_version=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | jq -r .tag_name)
+    print_status "Installing Docker Compose $compose_version..."
+
+    # Download with progress bar
+    local compose_url="https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-$(uname -s)-$(uname -m)"
+    print_status "Downloading Docker Compose binary..."
+
+    if sudo curl -L --progress-bar "$compose_url" -o /usr/local/bin/docker-compose; then
+        print_success "Docker Compose downloaded successfully"
+    else
+        print_error "Failed to download Docker Compose"
+        exit 1
+    fi
+
+    print_status "Setting executable permissions..."
+    sudo chmod +x /usr/local/bin/docker-compose
+
+    # Verify installation
+    if docker-compose --version >/dev/null 2>&1; then
+        local installed_version=$(docker-compose --version | cut -d' ' -f3 | cut -d',' -f1)
+        print_success "Docker Compose installed successfully (version: $installed_version)"
+    else
+        print_error "Docker Compose installation failed"
+        exit 1
+    fi
+}
+
+# Create directory structure
+create_directories() {
+    print_step "Creating Directory Structure"
+
+    echo -e "${CYAN}Setting up SkyLab directory structure:${NC}"
+    echo -e "   • $INSTALL_DIR - Main installation files"
+    echo -e "   • $DATA_DIR/appdata - Service configuration and data"
+    echo -e "   • Organized folders for each service"
+    echo ""
+
+    print_status "Creating installation directory at $INSTALL_DIR..."
+    sudo mkdir -p "$INSTALL_DIR"
+    sudo chown $USER:$USER "$INSTALL_DIR"
+
+    print_status "Creating data directories at $DATA_DIR..."
+    sudo mkdir -p "$DATA_DIR/appdata"
+    sudo chown -R $USER:$USER "$DATA_DIR"
+
+    # Create specific app directories
+    print_status "Creating service directories..."
+    local app_dirs=(
+        "filebrowser/config"
+        "filebrowser/data"
+        "portainer"
+        "adguard"
+        "watchtower"
+        "uptime-kuma"
+        "heimdall/config"
+        "nginx-proxy-manager/data"
+        "nginx-proxy-manager/letsencrypt"
+    )
+
+    if [[ "$INSTALL_TYPE" == "cloudflare" || "$INSTALL_TYPE" == "portforward" ]]; then
+        app_dirs+=(
+            "traefik"
+            "authelia"
+        )
+        print_status "Adding advanced service directories (Traefik, Authelia)..."
+    fi
+
+    for dir in "${app_dirs[@]}"; do
+        if ! mkdir -p "$DATA_DIR/appdata/$dir"; then
+            print_error "Failed to create directory: $DATA_DIR/appdata/$dir"
+            print_status "Check permissions and available disk space"
+            exit 1
+        fi
+        echo -e "   ${GREEN}✓${NC} Created: $DATA_DIR/appdata/$dir"
+    done
+
+    # Verify directory structure
+    print_status "Verifying directory permissions..."
+    if [[ ! -w "$DATA_DIR/appdata" ]]; then
+        print_error "Data directory is not writable: $DATA_DIR/appdata"
+        print_status "Attempting to fix permissions..."
+        if ! sudo chown -R $USER:$USER "$DATA_DIR/appdata"; then
+            print_error "Failed to fix directory permissions"
+            exit 1
+        fi
+        print_success "Directory permissions fixed"
+    fi
+
+    print_success "Directory structure created successfully"
+    print_status "All service data will be stored in $DATA_DIR/appdata"
+}
+
+# Generate secrets
+generate_secrets() {
+    print_step "Generating Security Secrets"
+
+    echo -e "${CYAN}Creating cryptographic secrets for security:${NC}"
+    echo -e "   • JWT Secret - Secures authentication tokens"
+    echo -e "   • Session Secret - Protects user sessions"
+    echo -e "   • Encryption Key - Encrypts stored data"
+    echo ""
+
+    print_status "Generating JWT secret (64 characters)..."
+    JWT_SECRET=$(openssl rand -hex 32)
+
+    print_status "Generating session secret (64 characters)..."
+    SESSION_SECRET=$(openssl rand -hex 32)
+
+    print_status "Generating encryption key (32 characters)..."
+    ENCRYPTION_KEY=$(openssl rand -hex 16)
+
+    print_success "Security secrets generated successfully"
+    print_status "These secrets will be stored securely in your .env file"
+}
+
+# Auto-detect server IP
+detect_server_ip() {
+    print_status "Auto-detecting server IP address..."
+
+    # Try multiple methods to get the local IP
+    local server_ip=""
+
+    # Method 1: Try to get local network IP (most common for home labs)
+    if command -v ip >/dev/null 2>&1; then
+        server_ip=$(ip route get 8.8.8.8 2>/dev/null | grep -oP 'src \K\S+' | head -1)
+    fi
+
+    # Method 2: Use hostname -I as fallback
+    if [[ -z "$server_ip" ]]; then
+        server_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+
+    # Method 3: Parse ip addr output
+    if [[ -z "$server_ip" ]]; then
+        server_ip=$(ip addr show 2>/dev/null | grep 'inet ' | grep -v '127.0.0.1' | head -1 | awk '{print $2}' | cut -d'/' -f1)
+    fi
+
+    # Method 4: Use ifconfig if available
+    if [[ -z "$server_ip" ]] && command -v ifconfig >/dev/null 2>&1; then
+        server_ip=$(ifconfig 2>/dev/null | grep 'inet ' | grep -v '127.0.0.1' | head -1 | awk '{print $2}')
+    fi
+
+    # Method 5: Last resort - use localhost
+    if [[ -z "$server_ip" ]]; then
+        server_ip="127.0.0.1"
+        print_warning "Could not detect IP address, using localhost (127.0.0.1)"
+    fi
+
+    # Validate IP format
+    if [[ $server_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        print_success "Detected server IP: $server_ip"
+
+        # Check if it's a private IP (typical for home labs)
+        if [[ $server_ip =~ ^192\.168\. ]] || [[ $server_ip =~ ^10\. ]] || [[ $server_ip =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]]; then
+            print_status "Detected private IP address (perfect for home lab)"
+            print_status "Services will be accessible from devices on your local network"
+        elif [[ $server_ip == "127.0.0.1" ]]; then
+            print_warning "Using localhost - services will only be accessible from this machine"
+            print_status "Consider using your network IP for access from other devices"
+        else
+            print_status "Detected public IP address"
+            print_warning "Ensure firewall is properly configured for security"
+        fi
+    else
+        print_warning "Invalid IP format detected: $server_ip, using 127.0.0.1"
+        server_ip="127.0.0.1"
+    fi
+
+    SERVER_IP="$server_ip"
+
+    # Ask user to confirm the detected IP
+    echo ""
+    echo -e "${BOLD}${YELLOW}Please confirm your server IP address:${NC}"
+    echo -e "Detected IP: ${CYAN}$SERVER_IP${NC}"
+    echo ""
+    echo -e "${CYAN}This IP will be used for:${NC}"
+    echo -e "   • Service access URLs"
+    echo -e "   • AdGuard Home DNS configuration"
+    echo -e "   • VPN server configuration"
+    echo ""
+
+    while true; do
+        read -p "Is this IP address correct? [Y/n]: " confirm
+        case $confirm in
+            [Nn]*)
+                echo ""
+                read -p "Enter the correct IP address: " custom_ip
+                if [[ $custom_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+                    SERVER_IP="$custom_ip"
+                    print_success "Using custom IP: $SERVER_IP"
+                    break
+                else
+                    print_warning "Invalid IP format. Please try again."
+                fi
+                ;;
+            [Yy]*|"")
+                print_success "Using detected IP: $SERVER_IP"
+                break
+                ;;
+            *)
+                print_warning "Please answer yes (y) or no (n)"
+                ;;
+        esac
+    done
+}
+
+# Create environment file
+create_env_file() {
+    print_step "Creating Environment Configuration"
+
+    # Auto-detect server IP
+    detect_server_ip
+
+    echo -e "${CYAN}Environment configuration:${NC}"
+    echo -e "   • Server IP: ${YELLOW}$SERVER_IP${NC}"
+    echo -e "   • Timezone: ${YELLOW}$(timedatectl show --property=Timezone --value 2>/dev/null || echo "UTC")${NC}"
+    echo -e "   • User ID: ${YELLOW}$(id -u)${NC}"
+    echo -e "   • Group ID: ${YELLOW}$(id -g)${NC}"
+    echo ""
+
+    cat > "$INSTALL_DIR/.env" << EOF
+# SkyLab Environment Configuration
+# Generated on $(date)
+
+# System Configuration
+TZ=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "UTC")
+PUID=$(id -u)
+PGID=$(id -g)
+
+# Server Configuration
+SERVER_IP=${SERVER_IP}
+
+# Data Directory
+DATA_DIR=${DATA_DIR}
+
+# Service Ports
+FILEBROWSER_PORT=8080
+PORTAINER_HTTP_PORT=9000
+PORTAINER_HTTPS_PORT=9443
+ADGUARD_PORT=3000
+UPTIME_KUMA_PORT=3001
+HEIMDALL_PORT=8090
+
+EOF
+
+    if [[ "$INSTALL_TYPE" == "cloudflare" ]]; then
+        cat >> "$INSTALL_DIR/.env" << EOF
+# Domain Configuration
+DOMAIN=${DOMAIN}
+
+# Cloudflare Configuration
+CF_API_EMAIL=${CF_EMAIL}
+CF_API_KEY=${CF_API_KEY}
+TUNNEL_TOKEN=
+
+# Authelia Configuration
+AUTHELIA_JWT_SECRET=${JWT_SECRET}
+AUTHELIA_SESSION_SECRET=${SESSION_SECRET}
+AUTHELIA_STORAGE_ENCRYPTION_KEY=${ENCRYPTION_KEY}
+
+EOF
+    elif [[ "$INSTALL_TYPE" == "portforward" && -n "$DOMAIN" ]]; then
+        cat >> "$INSTALL_DIR/.env" << EOF
+# Domain Configuration
+DOMAIN=${DOMAIN}
+
+# Authelia Configuration
+AUTHELIA_JWT_SECRET=${JWT_SECRET}
+AUTHELIA_SESSION_SECRET=${SESSION_SECRET}
+AUTHELIA_STORAGE_ENCRYPTION_KEY=${ENCRYPTION_KEY}
+
+EOF
+    fi
+
+    print_success "Environment file created at $INSTALL_DIR/.env"
+}
+
+# Create docker-compose file
+create_docker_compose() {
+    print_step "Creating Docker Compose Configuration"
+
+    cat > "$INSTALL_DIR/docker-compose.yml" << 'EOF'
+
+networks:
+  skylab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+services:
+  # Filebrowser - Web-based file management
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: filebrowser
+    restart: unless-stopped
+    ports:
+      - "${FILEBROWSER_PORT:-8080}:80"
+    volumes:
+      - ${DATA_DIR}/appdata/filebrowser/config:/config
+      - ${DATA_DIR}:/srv
+      - /:/mnt/host:ro
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    networks:
+      - skylab
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.filebrowser.rule=Host('files.${DOMAIN:-localhost}')"
+      - "traefik.http.routers.filebrowser.middlewares=authelia@docker"
+      - "traefik.http.services.filebrowser.loadbalancer.server.port=80"
+
+  # PiVPN - OpenVPN server
+  pivpn:
+    image: innovativeinventor/docker-pivpn:latest
+    container_name: pivpn
+    restart: unless-stopped
+    ports:
+      - "1194:1194/udp"
+      - "8443:8080"
+    volumes:
+      - ${DATA_DIR}/appdata/pivpn:/vpn
+    environment:
+      - TZ=${TZ:-UTC}
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    networks:
+      - skylab
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pivpn.rule=Host('vpn.${DOMAIN:-localhost}')"
+      - "traefik.http.routers.pivpn.middlewares=authelia@docker"
+      - "traefik.http.services.pivpn.loadbalancer.server.port=8080"
+
+  # Portainer - Docker management UI
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - "${PORTAINER_HTTP_PORT:-9000}:9000"
+      - "${PORTAINER_HTTPS_PORT:-9443}:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DATA_DIR}/appdata/portainer:/data
+    networks:
+      - skylab
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host('portainer.${DOMAIN:-localhost}')"
+      - "traefik.http.routers.portainer.middlewares=authelia@docker"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+
+  # AdGuard Home - DNS Ad Blocker (Dockerized)
+  adguard:
+    image: adguard/adguardhome:latest
+    container_name: adguard
+    restart: unless-stopped
+    ports:
+      - "${ADGUARD_PORT:-3000}:3000"
+      - "53:53/tcp"
+      - "53:53/udp"
+    volumes:
+      - ${DATA_DIR}/appdata/adguard/work:/opt/adguardhome/work
+      - ${DATA_DIR}/appdata/adguard/conf:/opt/adguardhome/conf
+    environment:
+      - TZ=${TZ:-UTC}
+    networks:
+      - skylab
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.adguard.rule=Host('dns.${DOMAIN:-localhost}')"
+      - "traefik.http.routers.adguard.middlewares=authelia@docker"
+      - "traefik.http.services.adguard.loadbalancer.server.port=3000"
+
+  # Watchtower - Automatic container updates
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TZ=${TZ:-UTC}
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_SCHEDULE=0 0 4 * * *
+    networks:
+      - skylab
+
+  # Nginx Proxy Manager - Traditional reverse proxy (optional)
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    volumes:
+      - ${DATA_DIR}/appdata/nginx-proxy-manager/data:/data
+      - ${DATA_DIR}/appdata/nginx-proxy-manager/letsencrypt:/etc/letsencrypt
+    networks:
+      - skylab
+    profiles:
+      - npm  # Only start with --profile npm
+
+  # Uptime Kuma - Service monitoring (optional)
+  uptime-kuma:
+    image: louislam/uptime-kuma:latest
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "${UPTIME_KUMA_PORT:-3001}:3001"
+    volumes:
+      - ${DATA_DIR}/appdata/uptime-kuma:/app/data
+    networks:
+      - skylab
+    profiles:
+      - monitoring
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.uptime.rule=Host('status.${DOMAIN:-localhost}')"
+      - "traefik.http.routers.uptime.middlewares=authelia@docker"
+      - "traefik.http.services.uptime.loadbalancer.server.port=3001"
+
+  # Heimdall - Application dashboard (optional)
+  heimdall:
+    image: lscr.io/linuxserver/heimdall:latest
+    container_name: heimdall
+    restart: unless-stopped
+    ports:
+      - "${HEIMDALL_PORT:-8090}:80"
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${DATA_DIR}/appdata/heimdall/config:/config
+    networks:
+      - skylab
+    profiles:
+      - dashboard
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.heimdall.rule=Host('dashboard.${DOMAIN:-localhost}')"
+      - "traefik.http.routers.heimdall.middlewares=authelia@docker"
+      - "traefik.http.services.heimdall.loadbalancer.server.port=80"
+EOF
+
+    # Add Traefik and Authelia for advanced setups
+    if [[ "$INSTALL_TYPE" == "cloudflare" || "$INSTALL_TYPE" == "portforward" ]]; then
+        cat >> "$INSTALL_DIR/docker-compose.yml" << 'EOF'
+
+  # Traefik - Modern reverse proxy
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8081:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${DATA_DIR}/appdata/traefik:/etc/traefik
+      - ${DATA_DIR}/appdata/traefik/acme:/acme
+    environment:
+      - CF_API_EMAIL=${CF_API_EMAIL}
+      - CF_API_KEY=${CF_API_KEY}
+    networks:
+      - skylab
+    profiles:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host('traefik.${DOMAIN:-localhost}')"
+      - "traefik.http.routers.traefik.middlewares=authelia@docker"
+      - "traefik.http.routers.traefik.service=api@internal"
+
+  # Authelia - Authentication server
+  authelia:
+    image: authelia/authelia:latest
+    container_name: authelia
+    restart: unless-stopped
+    volumes:
+      - ${DATA_DIR}/appdata/authelia:/config
+    environment:
+      - TZ=${TZ:-UTC}
+    networks:
+      - skylab
+    profiles:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.authelia.rule=Host('auth.${DOMAIN:-localhost}')"
+      - "traefik.http.services.authelia.loadbalancer.server.port=9091"
+      - "traefik.http.middlewares.authelia.forwardauth.address=http://authelia:9091/api/verify?rd=https://auth.${DOMAIN:-localhost}"
+      - "traefik.http.middlewares.authelia.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email"
+EOF
+    fi
+
+    # Add Cloudflare tunnel for cloudflare setup
+    if [[ "$INSTALL_TYPE" == "cloudflare" ]]; then
+        cat >> "$INSTALL_DIR/docker-compose.yml" << 'EOF'
+
+  # Cloudflare Tunnel
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    networks:
+      - skylab
+    profiles:
+      - proxy
+    depends_on:
+      - traefik
+EOF
+    fi
+
+    print_success "Docker Compose configuration created"
+}
+
+# Create Traefik configuration
+create_traefik_config() {
+    if [[ "$INSTALL_TYPE" != "cloudflare" && "$INSTALL_TYPE" != "portforward" ]]; then
+        return
+    fi
+
+    print_step "Creating Traefik Configuration"
+
+    mkdir -p "$DATA_DIR/appdata/traefik"
+
+    # Main Traefik configuration
+    cat > "$DATA_DIR/appdata/traefik/traefik.yml" << EOF
+# Traefik Configuration for SkyLab
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+api:
+  dashboard: true
+  debug: false
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entrypoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    address: ":443"
+
+certificatesResolvers:
+  cloudflare:
+    acme:
+      email: ${CF_EMAIL:-admin@example.com}
+      storage: /acme/acme.json
+      dnsChallenge:
+        provider: cloudflare
+        resolvers:
+          - "1.1.1.1:53"
+          - "1.0.0.1:53"
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: skylab_skylab
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+
+log:
+  level: INFO
+
+accessLog: {}
+
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addServicesLabels: true
+EOF
+
+    # Dynamic configuration
+    cat > "$DATA_DIR/appdata/traefik/dynamic.yml" << 'EOF'
+# Traefik Dynamic Configuration
+http:
+  middlewares:
+    secure-headers:
+      headers:
+        accessControlAllowMethods:
+          - GET
+          - OPTIONS
+          - PUT
+        accessControlMaxAge: 100
+        hostsProxyHeaders:
+          - "X-Forwarded-Host"
+        referrerPolicy: "same-origin"
+        sslRedirect: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        forceSTSHeader: true
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+
+    default:
+      chain:
+        middlewares:
+          - secure-headers
+          - rate-limit
+
+tls:
+  options:
+    default:
+      sslStrategies:
+        - "tls.SniStrict"
+      minVersion: "VersionTLS12"
+      cipherSuites:
+        - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+        - "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305"
+        - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+        - "TLS_RSA_WITH_AES_256_GCM_SHA384"
+        - "TLS_RSA_WITH_AES_128_GCM_SHA256"
+EOF
+
+    # Create acme directory and file with correct permissions
+    print_status "Creating ACME directory for SSL certificates..."
+
+    # Ensure parent directory exists with proper permissions
+    if ! mkdir -p "$DATA_DIR/appdata/traefik"; then
+        print_error "Failed to create traefik directory"
+        print_status "Check permissions for $DATA_DIR/appdata/"
+        exit 1
+    fi
+
+    # Create acme subdirectory
+    if ! mkdir -p "$DATA_DIR/appdata/traefik/acme"; then
+        print_error "Failed to create acme directory"
+        print_status "Check permissions for $DATA_DIR/appdata/traefik/"
+        exit 1
+    fi
+
+    # Create acme.json file
+    if ! touch "$DATA_DIR/appdata/traefik/acme/acme.json"; then
+        print_error "Failed to create acme.json file"
+        print_status "Check permissions for $DATA_DIR/appdata/traefik/acme/"
+        exit 1
+    fi
+
+    # Set secure permissions for acme.json
+    if ! chmod 600 "$DATA_DIR/appdata/traefik/acme/acme.json"; then
+        print_error "Failed to set permissions on acme.json"
+        exit 1
+    fi
+
+    print_success "ACME directory and file created successfully"
+    print_success "Traefik configuration created"
+}
+
+# Create Authelia configuration
+create_authelia_config() {
+    if [[ "$INSTALL_TYPE" != "cloudflare" && "$INSTALL_TYPE" != "portforward" ]]; then
+        return
+    fi
+
+    print_step "Creating Authelia Configuration"
+
+    mkdir -p "$DATA_DIR/appdata/authelia"
+
+    # Main Authelia configuration
+    cat > "$DATA_DIR/appdata/authelia/configuration.yml" << EOF
+# Authelia Configuration for SkyLab
+server:
+  host: 0.0.0.0
+  port: 9091
+  path: ""
+  read_buffer_size: 4096
+  write_buffer_size: 4096
+
+log:
+  level: info
+  format: text
+
+jwt_secret: ${JWT_SECRET}
+default_redirection_url: https://auth.${DOMAIN:-localhost}
+
+totp:
+  issuer: SkyLab
+  period: 30
+  skew: 1
+
+authentication_backend:
+  file:
+    path: /config/users_database.yml
+    password:
+      algorithm: argon2id
+      iterations: 1
+      salt_length: 16
+      parallelism: 8
+      memory: 64
+
+access_control:
+  default_policy: deny
+  rules:
+    - domain: traefik.${DOMAIN:-localhost}
+      policy: two_factor
+    - domain: portainer.${DOMAIN:-localhost}
+      policy: two_factor
+    - domain: files.${DOMAIN:-localhost}
+      policy: one_factor
+    - domain: status.${DOMAIN:-localhost}
+      policy: two_factor
+    - domain: dashboard.${DOMAIN:-localhost}
+      policy: one_factor
+    - domain: vpn.${DOMAIN:-localhost}
+      policy: two_factor
+
+session:
+  name: authelia_session
+  secret: ${SESSION_SECRET}
+  expiration: 3600
+  inactivity: 300
+  domain: ${DOMAIN:-localhost}
+
+regulation:
+  max_retries: 3
+  find_time: 120
+  ban_time: 300
+
+storage:
+  local:
+    path: /config/db.sqlite3
+  encryption_key: ${ENCRYPTION_KEY}
+
+notifier:
+  filesystem:
+    filename: /config/notification.txt
+EOF
+
+    # Create users database with default admin user
+    local admin_password_hash='$argon2id$v=19$m=65536,t=3,p=4$BpLnfgDsc2WD8F2q$o/vzA4myCqZZ36bUGsDY//8mKUYNZZaR0t4MFFSs+iM'
+
+    cat > "$DATA_DIR/appdata/authelia/users_database.yml" << EOF
+# Authelia Users Database
+users:
+  admin:
+    displayname: "Administrator"
+    password: "${admin_password_hash}"  # Password: admin123
+    email: admin@${DOMAIN:-skylab.local}
+    groups:
+      - admins
+      - dev
+
+groups:
+  admins:
+    - admin
+  users: []
+EOF
+
+    print_success "Authelia configuration created"
+    print_warning "Default admin password is 'admin123' - change this after first login!"
+}
+
+# Install and configure Cloudflare tunnel
+setup_cloudflare_tunnel() {
+    if [[ "$INSTALL_TYPE" != "cloudflare" ]]; then
+        return
+    fi
+
+    print_step "Setting up Cloudflare Tunnel"
+
+    # Install cloudflared
+    if ! command -v cloudflared >/dev/null 2>&1; then
+        print_status "Installing cloudflared..."
+        wget -q "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}.deb"
+        sudo dpkg -i "cloudflared-linux-${ARCH}.deb" >/dev/null 2>&1
+        rm "cloudflared-linux-${ARCH}.deb"
+    fi
+
+    print_status "Authenticating with Cloudflare..."
+    print_warning "This will open a browser window. Please log in to Cloudflare and authorize the tunnel."
+
+    # Authenticate
+    cloudflared tunnel login
+
+    # Create tunnel
+    local tunnel_name="skylab-tunnel"
+    print_status "Creating tunnel: $tunnel_name"
+
+    local tunnel_id
+    if cloudflared tunnel list | grep -q "$tunnel_name"; then
+        print_warning "Tunnel $tunnel_name already exists"
+        tunnel_id=$(cloudflared tunnel list | grep "$tunnel_name" | awk '{print $1}')
+    else
+        tunnel_id=$(cloudflared tunnel create "$tunnel_name" | grep -o '[a-f0-9-]\{36\}')
+        print_success "Tunnel created with ID: $tunnel_id"
+    fi
+
+    # Create tunnel configuration
+    print_status "Creating tunnel configuration..."
+    mkdir -p ~/.cloudflared
+
+    # Validate variables before creating config
+    if [[ -z "$tunnel_id" ]]; then
+        print_error "Tunnel ID is empty"
+        exit 1
+    fi
+
+    if [[ -z "$DOMAIN" ]]; then
+        print_error "Domain is empty"
+        exit 1
+    fi
+
+    print_status "Creating tunnel config with ID: $tunnel_id and domain: $DOMAIN"
+
+    cat > ~/.cloudflared/config.yml << EOF
+tunnel: $tunnel_id
+credentials-file: ~/.cloudflared/$tunnel_id.json
+
+ingress:
+  - hostname: "*.$DOMAIN"
+    service: http://localhost:80
+  - service: http_status:404
+EOF
+
+    # Verify the config file was created correctly
+    if [[ ! -f ~/.cloudflared/config.yml ]]; then
+        print_error "Failed to create tunnel configuration file"
+        exit 1
+    fi
+
+    # Validate YAML syntax
+    if ! cloudflared tunnel ingress validate ~/.cloudflared/config.yml 2>/dev/null; then
+        print_error "Invalid tunnel configuration generated"
+        print_status "Config file contents:"
+        cat ~/.cloudflared/config.yml
+        exit 1
+    fi
+
+    # Get tunnel token and update .env
+    print_status "Generating tunnel token..."
+    local tunnel_token=$(cloudflared tunnel token "$tunnel_name" 2>/dev/null)
+
+    if [[ -z "$tunnel_token" ]]; then
+        print_error "Failed to generate tunnel token"
+        print_status "Trying alternative method..."
+        tunnel_token=$(cloudflared tunnel token "$tunnel_id" 2>/dev/null)
+    fi
+
+    if [[ -z "$tunnel_token" ]]; then
+        print_error "Could not generate tunnel token"
+        print_status "You may need to manually configure the tunnel"
+        print_status "Tunnel ID: $tunnel_id"
+    else
+        print_success "Tunnel token generated successfully"
+        sed -i "s/TUNNEL_TOKEN=.*/TUNNEL_TOKEN=$tunnel_token/" "$INSTALL_DIR/.env"
+    fi
+
+    print_success "Cloudflare Tunnel setup completed!"
+    print_warning "Don't forget to add DNS records in Cloudflare dashboard:"
+    print_status "Type: CNAME, Name: *, Target: $tunnel_id.cfargotunnel.com"
+}
+
+# Resolve DNS port conflicts
+resolve_dns_conflicts() {
+    print_step "Resolving DNS Port Conflicts"
+
+    echo -e "${CYAN}AdGuard Home requires port 53 for DNS service:${NC}"
+    echo -e "   • Standard DNS port that all devices expect"
+    echo -e "   • Required for router and device DNS configuration"
+    echo -e "   • Cannot use alternative ports for real-world DNS"
+    echo ""
+
+    # Check for conflicting services
+    local conflicting_services=()
+
+    # Check systemd-resolved
+    if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+        conflicting_services+=("systemd-resolved")
+    fi
+
+    # Check dnsmasq
+    if systemctl is-active --quiet dnsmasq 2>/dev/null; then
+        conflicting_services+=("dnsmasq")
+    fi
+
+    # Check if port 53 is in use
+    if netstat -tulpn 2>/dev/null | grep -q ":53 " || ss -tulpn 2>/dev/null | grep -q ":53 "; then
+        print_warning "Port 53 is currently in use by system DNS service"
+    fi
+
+    if [[ ${#conflicting_services[@]} -gt 0 ]]; then
+        echo -e "${YELLOW}⚠️ Found conflicting DNS services:${NC}"
+        for service in "${conflicting_services[@]}"; do
+            echo -e "   • $service"
+        done
+        echo ""
+        echo -e "${BOLD}These services must be stopped for AdGuard to work properly.${NC}"
+        echo ""
+
+        while true; do
+            read -p "Stop conflicting DNS services automatically? [Y/n]: " confirm
+            case $confirm in
+                [Nn]*)
+                    print_warning "DNS conflicts not resolved - AdGuard may fail to start"
+                    print_status "You can manually stop services later with:"
+                    for service in "${conflicting_services[@]}"; do
+                        echo -e "   sudo systemctl stop $service"
+                        echo -e "   sudo systemctl disable $service"
+                    done
+                    break
+                    ;;
+                [Yy]*|"")
+                    print_status "Stopping conflicting DNS services..."
+                    for service in "${conflicting_services[@]}"; do
+                        print_status "Stopping $service..."
+                        sudo systemctl stop "$service" >/dev/null 2>&1
+                        sudo systemctl disable "$service" >/dev/null 2>&1
+                        echo -e "   ${GREEN}✓${NC} Stopped $service"
+                    done
+                    print_success "DNS conflicts resolved"
+
+                    # Temporarily restore DNS resolution for Docker operations
+                    print_status "Configuring temporary DNS resolution..."
+                    echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf >/dev/null
+                    echo "nameserver 1.1.1.1" | sudo tee -a /etc/resolv.conf >/dev/null
+                    print_success "Temporary DNS configured for Docker operations"
+
+                    break
+                    ;;
+                *)
+                    print_warning "Please answer yes (y) or no (n)"
+                    ;;
+            esac
+        done
+    else
+        print_success "No DNS conflicts detected - port 53 is available"
+    fi
+}
+
+# Prepare AdGuard Home configuration
+prepare_adguard_config() {
+    print_step "Preparing AdGuard Home Configuration"
+
+    print_status "Creating AdGuard Home configuration directory..."
+    mkdir -p "$DATA_DIR/appdata/adguard/work"
+    mkdir -p "$DATA_DIR/appdata/adguard/conf"
+
+    # Create basic AdGuard Home configuration
+    cat > "$DATA_DIR/appdata/adguard/conf/AdGuardHome.yaml" << EOF
+# AdGuard Home Configuration
+bind_host: 0.0.0.0
+bind_port: 3000
+users:
+  - name: admin
+    password: \$2a\$10\$iyodZLWqzE5DZmdSuhb9YOczW5TgdRLHbPTvmQonLlcHEpr5bq7Ga  # admin123
+web_session_ttl: 720h
+dns:
+  bind_hosts:
+    - 0.0.0.0
+  port: 53
+  statistics_interval: 24h
+  querylog_enabled: true
+  querylog_file_enabled: true
+  querylog_interval: 2160h
+  querylog_size_memory: 1000
+  anonymize_client_ip: false
+  protection_enabled: true
+  blocking_mode: default
+  blocked_response_ttl: 10
+  parental_block_host: family-block.dns.adguard.com
+  safebrowsing_block_host: standard-block.dns.adguard.com
+  rewrites: []
+  blocked_services: []
+  upstream_dns:
+    - 8.8.8.8
+    - 8.8.4.4
+    - 1.1.1.1
+    - 1.0.0.1
+  upstream_dns_file: ""
+  bootstrap_dns:
+    - 9.9.9.10
+    - 149.112.112.10
+    - 2620:fe::10
+    - 2620:fe::fe:10
+  all_servers: false
+  fastest_addr: false
+  fastest_timeout: 1s
+  allowed_clients: []
+  disallowed_clients: []
+  blocked_hosts:
+    - version.bind
+    - id.server
+    - hostname.bind
+  cache_size: 4194304
+  cache_ttl_min: 0
+  cache_ttl_max: 0
+  cache_optimistic: false
+  bogus_nxdomain: []
+  aaaa_disabled: false
+  enable_dnssec: false
+  edns_client_subnet:
+    custom_ip: ""
+    enabled: false
+    use_custom: false
+  max_goroutines: 300
+  handle_ddr: true
+  ipset: []
+  ipset_file: ""
+  filtering:
+    protection_enabled: true
+    filtering_enabled: true
+    blocked_response_ttl: 10
+    parental_enabled: false
+    safebrowsing_enabled: false
+    safesearch_enabled: false
+    safesearch_cache_size: 1048576
+    safesearch_cache_ttl: 1800
+    rewrites: []
+    blocked_services: []
+    parental_block_host: family-block.dns.adguard.com
+    safebrowsing_block_host: standard-block.dns.adguard.com
+  filters:
+    - enabled: true
+      url: https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
+      name: AdGuard DNS filter
+      id: 1
+    - enabled: true
+      url: https://adaway.org/hosts.txt
+      name: AdAway Default Blocklist
+      id: 2
+  whitelist_filters: []
+  user_rules: []
+dhcp:
+  enabled: false
+clients:
+  runtime_sources:
+    whois: true
+    arp: true
+    rdns: true
+    dhcp: true
+    hosts: true
+  persistent: []
+log_file: ""
+log_max_backups: 0
+log_max_size: 100
+log_max_age: 3
+log_compress: false
+log_localtime: false
+verbose: false
+os:
+  group: ""
+  user: ""
+  rlimit_nofile: 0
+schema_version: 20
+EOF
+
+    print_success "AdGuard Home configuration prepared"
+    print_status "AdGuard Home will be available as a Docker container"
+    print_status "DNS service will run on standard port 53"
+}
+
+# Create management script
+create_management_script() {
+    print_step "Creating Management Script"
+
+    cat > "$INSTALL_DIR/skylab" << 'EOF'
+#!/bin/bash
+
+# SkyLab Management Script
+INSTALL_DIR="/opt/skylab"
+cd "$INSTALL_DIR"
+
+case "$1" in
+    start|up)
+        echo "Starting SkyLab services..."
+        docker-compose up -d ${@:2}
+        ;;
+    stop|down)
+        echo "Stopping SkyLab services..."
+        docker-compose down
+        ;;
+    restart)
+        echo "Restarting SkyLab services..."
+        docker-compose restart ${@:2}
+        ;;
+    status)
+        echo "SkyLab Service Status:"
+        docker-compose ps
+        ;;
+    logs)
+        docker-compose logs -f ${@:2}
+        ;;
+    update)
+        echo "Updating SkyLab services..."
+        docker-compose pull
+        docker-compose up -d
+        ;;
+    deploy)
+        profiles="${@:2}"
+        if [[ -z "$profiles" ]]; then
+            profiles="core"
+        fi
+        echo "Deploying SkyLab with profiles: $profiles"
+
+        profile_args=""
+        for profile in $profiles; do
+            if [[ "$profile" != "core" ]]; then
+                profile_args="$profile_args --profile $profile"
+            fi
+        done
+
+        # Check if docker-compose supports profiles
+        if docker-compose --help | grep -q "profile"; then
+            if ! docker-compose up -d $profile_args 2>/dev/null; then
+                echo "Docker permission issue, trying with sudo..."
+                sudo docker-compose up -d $profile_args
+            fi
+        else
+            echo "Docker Compose version doesn't support profiles, starting all services"
+            if ! docker-compose up -d 2>/dev/null; then
+                echo "Docker permission issue, trying with sudo..."
+                sudo docker-compose up -d
+            fi
+        fi
+        ;;
+    *)
+        echo "SkyLab Management Script"
+        echo ""
+        echo "Usage: $0 {start|stop|restart|status|logs|update|deploy} [options]"
+        echo ""
+        echo "Commands:"
+        echo "  start [service]     Start all services or specific service"
+        echo "  stop               Stop all services"
+        echo "  restart [service]  Restart all services or specific service"
+        echo "  status             Show service status"
+        echo "  logs [service]     Show logs for all or specific service"
+        echo "  update             Update all services to latest images"
+        echo "  deploy [profiles]  Deploy with specific profiles"
+        echo ""
+        echo "Profiles:"
+        echo "  core              Essential services (default)"
+        echo "  proxy             Traefik + Authelia + Cloudflare Tunnel"
+        echo "  monitoring        Uptime Kuma"
+        echo "  dashboard         Heimdall"
+        echo "  npm               Nginx Proxy Manager"
+        echo ""
+        echo "Examples:"
+        echo "  $0 deploy core proxy"
+        echo "  $0 logs traefik"
+        echo "  $0 restart filebrowser"
+        ;;
+esac
+EOF
+
+    chmod +x "$INSTALL_DIR/skylab"
+
+    # Create symlink for global access
+    sudo ln -sf "$INSTALL_DIR/skylab" /usr/local/bin/skylab
+
+    print_success "Management script created"
+    print_status "Use 'skylab' command from anywhere to manage your stack"
+}
+
+# Deploy services
+deploy_services() {
+    print_step "Deploying SkyLab Services"
+
+    cd "$INSTALL_DIR"
+
+    echo -e "${CYAN}Starting Docker containers for your selected services...${NC}"
+    echo ""
+
+    # Build profile arguments
+    local profile_args=""
+
+    case "$INSTALL_TYPE" in
+        local)
+            echo -e "${YELLOW}Deploying Local Only services:${NC}"
+            echo -e "   • Filebrowser (File management)"
+            echo -e "   • PiVPN (VPN server)"
+            echo -e "   • AdGuard Home (DNS ad-blocking) - Docker"
+            echo -e "   • Portainer (Docker management)"
+            echo -e "   • Watchtower (Auto-updates)"
+
+            # Add optional services for local installation
+            if [[ "$INSTALL_MONITORING" == true ]]; then
+                echo -e "   • Uptime Kuma (Service monitoring)"
+                profile_args="$profile_args --profile monitoring"
+            fi
+            if [[ "$INSTALL_DASHBOARD" == true ]]; then
+                echo -e "   • Heimdall (Application dashboard)"
+                profile_args="$profile_args --profile dashboard"
+            fi
+            echo ""
+            print_status "Starting core services$profile_args..."
+            print_status "Pulling Docker images and starting containers..."
+
+            # Run docker-compose with progress output
+            docker-compose pull $profile_args 2>&1 | while IFS= read -r line; do
+                if [[ "$line" =~ (Pulling|Downloaded|Extracting|Pull complete) ]]; then
+                    print_status "$(echo "$line" | sed 's/^[[:space:]]*//')"
+                fi
+            done
+
+            print_status "Starting containers..."
+
+            # Check if docker-compose supports profiles
+            if docker-compose --help | grep -q "profile"; then
+                if ! docker-compose up -d $profile_args 2>/dev/null; then
+                    print_warning "Docker permission issue, trying with sudo..."
+                    sudo docker-compose up -d $profile_args
+                fi
+            else
+                print_warning "Docker Compose version doesn't support profiles, starting all services"
+                if ! docker-compose up -d 2>/dev/null; then
+                    print_warning "Docker permission issue, trying with sudo..."
+                    sudo docker-compose up -d
+                fi
+            fi
+            ;;
+        cloudflare)
+            echo -e "${YELLOW}Deploying Cloudflare Tunnel services:${NC}"
+            echo -e "   • All Local services +"
+            echo -e "   • Traefik (Reverse proxy)"
+            echo -e "   • Authelia (2FA authentication)"
+            echo -e "   • Cloudflare Tunnel (External access)"
+
+            profile_args="--profile proxy"
+            if [[ "$INSTALL_MONITORING" == true ]]; then
+                echo -e "   • Uptime Kuma (Service monitoring)"
+                profile_args="$profile_args --profile monitoring"
+            fi
+            if [[ "$INSTALL_DASHBOARD" == true ]]; then
+                echo -e "   • Heimdall (Application dashboard)"
+                profile_args="$profile_args --profile dashboard"
+            fi
+            echo ""
+            print_status "Starting core + proxy services..."
+
+            # Check if docker-compose supports profiles
+            if docker-compose --help | grep -q "profile"; then
+                if ! docker-compose up -d $profile_args 2>/dev/null; then
+                    print_warning "Docker permission issue, trying with sudo..."
+                    sudo docker-compose up -d $profile_args
+                fi
+            else
+                print_warning "Docker Compose version doesn't support profiles, starting all services"
+                if ! docker-compose up -d 2>/dev/null; then
+                    print_warning "Docker permission issue, trying with sudo..."
+                    sudo docker-compose up -d
+                fi
+            fi
+            ;;
+        portforward)
+            echo -e "${YELLOW}Deploying Port Forward services:${NC}"
+            echo -e "   • All Local services +"
+            echo -e "   • Traefik (Reverse proxy)"
+            echo -e "   • Authelia (2FA authentication)"
+
+            profile_args="--profile proxy"
+            if [[ "$INSTALL_MONITORING" == true ]]; then
+                echo -e "   • Uptime Kuma (Service monitoring)"
+                profile_args="$profile_args --profile monitoring"
+            fi
+            if [[ "$INSTALL_DASHBOARD" == true ]]; then
+                echo -e "   • Heimdall (Application dashboard)"
+                profile_args="$profile_args --profile dashboard"
+            fi
+            echo ""
+            print_status "Starting core + proxy services..."
+
+            # Check if docker-compose supports profiles
+            if docker-compose --help | grep -q "profile"; then
+                if ! docker-compose up -d $profile_args 2>/dev/null; then
+                    print_warning "Docker permission issue, trying with sudo..."
+                    sudo docker-compose up -d $profile_args
+                fi
+            else
+                print_warning "Docker Compose version doesn't support profiles, starting all services"
+                if ! docker-compose up -d 2>/dev/null; then
+                    print_warning "Docker permission issue, trying with sudo..."
+                    sudo docker-compose up -d
+                fi
+            fi
+            ;;
+    esac
+
+    # Wait a moment for containers to start
+    print_status "Waiting for containers to initialize..."
+    sleep 15
+
+    # Configure DNS to point to AdGuard Home if it's running
+    if docker ps --format "{{.Names}}" | grep -q "adguard"; then
+        print_status "Configuring system DNS to use AdGuard Home..."
+        local server_ip=$(hostname -I | awk '{print $1}')
+        echo "nameserver $server_ip" | sudo tee /etc/resolv.conf >/dev/null
+        echo "nameserver 8.8.8.8" | sudo tee -a /etc/resolv.conf >/dev/null
+        print_success "DNS configured to use AdGuard Home at $server_ip"
+    fi
+    sleep 10
+
+    # Check if containers are running
+    local running_containers=$(docker ps --format "table {{.Names}}" | grep -v NAMES | wc -l)
+    print_success "Services deployed successfully ($running_containers containers running)"
+
+    # Show any failed containers
+    local failed_containers=$(docker ps -a --filter "status=exited" --format "{{.Names}}" | head -5)
+    if [[ -n "$failed_containers" ]]; then
+        print_warning "Some containers may have issues:"
+        echo "$failed_containers" | while read container; do
+            echo -e "   ${RED}⚠${NC} $container"
+        done
+        print_status "Check logs with: skylab logs [container-name]"
+    fi
+}
+
+# Show final information
+show_completion_info() {
+    print_step "🎉 Installation Complete!"
+
+    # Use the already detected server IP
+    local server_ip="$SERVER_IP"
+
+    echo -e "${GREEN}${BOLD}🎉 SkyLab installation completed successfully!${NC}"
+    echo ""
+
+    # Show service access information based on installation type
+    case "$INSTALL_TYPE" in
+        local)
+            echo -e "${BOLD}${CYAN}🏠 Your Local Services:${NC}"
+            echo ""
+            echo -e "${BOLD}📁 File Management:${NC}"
+            echo -e "   ${CYAN}http://$server_ip:8080${NC} - Filebrowser"
+            echo -e "   Upload, download, and manage files through web browser"
+            echo ""
+            echo -e "${BOLD}🐳 Container Management:${NC}"
+            echo -e "   ${CYAN}http://$server_ip:9000${NC} - Portainer"
+            echo -e "   Monitor and control Docker containers visually"
+            echo ""
+            echo -e "${BOLD}🔒 VPN Server:${NC}"
+            echo -e "   ${CYAN}http://$server_ip:8443${NC} - PiVPN Admin"
+            echo -e "   Create VPN profiles for secure remote access"
+            echo ""
+            echo -e "${BOLD}🛡️ DNS Protection:${NC}"
+            echo -e "   ${CYAN}http://$server_ip:3000${NC} - AdGuard Home (Docker)"
+            echo -e "   Configure network-wide ad blocking and DNS filtering"
+            echo -e "   ${YELLOW}Default login: admin / admin123${NC}"
+            echo -e "   ${YELLOW}DNS Server: $server_ip${NC} - Set this as your device DNS"
+            ;;
+        cloudflare)
+            echo -e "${BOLD}${CYAN}☁️ Your Cloudflare Tunnel Services:${NC}"
+            echo ""
+            echo -e "${BOLD}🌐 External Access (HTTPS + 2FA):${NC}"
+            echo -e "   ${CYAN}https://files.$DOMAIN${NC} - File Management"
+            echo -e "   ${CYAN}https://portainer.$DOMAIN${NC} - Container Management"
+            echo -e "   ${CYAN}https://vpn.$DOMAIN${NC} - VPN Administration"
+            echo -e "   ${CYAN}https://dns.$DOMAIN${NC} - AdGuard Home (DNS Filtering)"
+            echo -e "   ${CYAN}https://traefik.$DOMAIN${NC} - Proxy Dashboard"
+            echo ""
+            echo -e "${BOLD}🔐 Authentication Portal:${NC}"
+            echo -e "   ${CYAN}https://auth.$DOMAIN${NC} - Login & 2FA Setup"
+            echo ""
+            echo -e "${BOLD}🛡️ Local DNS (No 2FA needed):${NC}"
+            echo -e "   ${CYAN}http://$server_ip:3000${NC} - AdGuard Home"
+            echo -e "   ${YELLOW}DNS Server: $server_ip${NC} - Configure devices to use this DNS"
+            echo ""
+            echo -e "${YELLOW}🔑 Default Login: admin / admin123${NC}"
+            echo -e "${RED}⚠️ Change this password immediately!${NC}"
+            ;;
+        portforward)
+            if [[ -n "$DOMAIN" ]]; then
+                echo -e "${BOLD}${CYAN}🌐 Your Port Forward Services:${NC}"
+                echo ""
+                echo -e "${BOLD}🌐 External Access (HTTPS + 2FA):${NC}"
+                echo -e "   ${CYAN}https://files.$DOMAIN${NC} - File Management"
+                echo -e "   ${CYAN}https://portainer.$DOMAIN${NC} - Container Management"
+                echo -e "   ${CYAN}https://vpn.$DOMAIN${NC} - VPN Administration"
+                echo -e "   ${CYAN}https://dns.$DOMAIN${NC} - AdGuard Home (DNS Filtering)"
+                echo -e "   ${CYAN}https://traefik.$DOMAIN${NC} - Proxy Dashboard"
+                echo ""
+                echo -e "${BOLD}🔐 Authentication Portal:${NC}"
+                echo -e "   ${CYAN}https://auth.$DOMAIN${NC} - Login & 2FA Setup"
+                echo ""
+                echo -e "${YELLOW}🔑 Default Login: admin / admin123${NC}"
+                echo -e "${RED}⚠️ Change this password immediately!${NC}"
+            else
+                echo -e "${BOLD}${CYAN}🌐 Your Port Forward Services:${NC}"
+                echo ""
+                echo -e "${BOLD}🌐 Local Access:${NC}"
+                echo -e "   ${CYAN}http://$server_ip:8080${NC} - Filebrowser"
+                echo -e "   ${CYAN}http://$server_ip:9000${NC} - Portainer"
+                echo -e "   ${CYAN}http://$server_ip:8443${NC} - PiVPN Admin"
+                echo -e "   ${CYAN}http://$server_ip:8081${NC} - Traefik Dashboard"
+            fi
+            echo ""
+            echo -e "${BOLD}🛡️ DNS Protection:${NC}"
+            echo -e "   ${CYAN}http://$server_ip:3000${NC} - AdGuard Home"
+            echo -e "   ${YELLOW}DNS Server: $server_ip${NC} - Configure devices to use this DNS"
+            ;;
+    esac
+
+    echo ""
+    echo -e "${BOLD}${MAGENTA}🛠️ Management Commands:${NC}"
+    echo -e "   ${YELLOW}skylab status${NC}     - Check all services"
+    echo -e "   ${YELLOW}skylab logs${NC}       - View service logs"
+    echo -e "   ${YELLOW}skylab restart${NC}    - Restart services"
+    echo -e "   ${YELLOW}skylab update${NC}     - Update to latest versions"
+    echo ""
+    echo -e "${BOLD}${MAGENTA}📦 Add More Services:${NC}"
+    echo -e "   ${YELLOW}skylab deploy core monitoring${NC}  - Add Uptime Kuma"
+    echo -e "   ${YELLOW}skylab deploy core dashboard${NC}   - Add Heimdall"
+    echo -e "   ${YELLOW}skylab deploy core monitoring dashboard${NC} - Add both"
+
+    # Installation-specific instructions
+    if [[ "$INSTALL_TYPE" == "cloudflare" ]]; then
+        echo ""
+        echo -e "${BOLD}${RED}🚨 IMPORTANT NEXT STEPS:${NC}"
+        echo ""
+        echo -e "${YELLOW}1. Add DNS Records in Cloudflare:${NC}"
+        echo -e "   • Go to Cloudflare Dashboard → DNS"
+        echo -e "   • Add CNAME record: ${CYAN}*${NC} → ${CYAN}tunnel-id.cfargotunnel.com${NC}"
+        echo -e "   • Or add individual records for each subdomain"
+        echo ""
+        echo -e "${YELLOW}2. Set Up 2FA Authentication:${NC}"
+        echo -e "   • Visit: ${CYAN}https://auth.$DOMAIN${NC}"
+        echo -e "   • Login with: ${CYAN}admin / admin123${NC}"
+        echo -e "   • Change password immediately"
+        echo -e "   • Set up 2FA with Google Authenticator or similar"
+        echo ""
+        echo -e "${YELLOW}3. Configure AdGuard Home:${NC}"
+        echo -e "   • Visit: ${CYAN}http://$server_ip:3000${NC}"
+        echo -e "   • Complete initial setup wizard"
+        echo -e "   • Set DNS servers on your devices to: ${CYAN}$server_ip${NC}"
+    fi
+
+    if [[ "$INSTALL_TYPE" == "portforward" ]]; then
+        echo ""
+        echo -e "${BOLD}${RED}🚨 IMPORTANT NEXT STEPS:${NC}"
+        echo ""
+        echo -e "${YELLOW}1. Configure Router Port Forwarding:${NC}"
+        echo -e "   • Forward port 80 → $server_ip:80"
+        echo -e "   • Forward port 443 → $server_ip:443"
+        echo -e "   • Ensure your server has a static local IP"
+        echo ""
+        if [[ -n "$DOMAIN" ]]; then
+            echo -e "${YELLOW}2. Set Up 2FA Authentication:${NC}"
+            echo -e "   • Visit: ${CYAN}https://auth.$DOMAIN${NC}"
+            echo -e "   • Login with: ${CYAN}admin / admin123${NC}"
+            echo -e "   • Change password immediately"
+            echo -e "   • Set up 2FA with Google Authenticator or similar"
+            echo ""
+        fi
+        echo -e "${YELLOW}3. Configure AdGuard Home:${NC}"
+        echo -e "   • Visit: ${CYAN}http://$server_ip:3000${NC}"
+        echo -e "   • Complete initial setup wizard"
+        echo -e "   • Set DNS servers on your devices to: ${CYAN}$server_ip${NC}"
+    fi
+
+    if [[ "$INSTALL_TYPE" == "local" ]]; then
+        echo ""
+        echo -e "${BOLD}${YELLOW}📋 RECOMMENDED NEXT STEPS:${NC}"
+        echo ""
+        echo -e "${YELLOW}1. Configure AdGuard Home:${NC}"
+        echo -e "   • Visit: ${CYAN}http://$server_ip:3000${NC}"
+        echo -e "   • Complete initial setup wizard"
+        echo -e "   • Set DNS servers on your devices to: ${CYAN}$server_ip${NC}"
+        echo ""
+        echo -e "${YELLOW}2. Set Up VPN Access:${NC}"
+        echo -e "   • Visit: ${CYAN}http://$server_ip:8443${NC}"
+        echo -e "   • Create VPN profiles for your devices"
+        echo -e "   • Download .ovpn files and configure clients"
+        echo ""
+        echo -e "${YELLOW}3. Explore Your Files:${NC}"
+        echo -e "   • Visit: ${CYAN}http://$server_ip:8080${NC}"
+        echo -e "   • Upload and manage files through web interface"
+        echo -e "   • Access your entire server filesystem"
+    fi
+
+    echo ""
+    echo -e "${BOLD}${GREEN}🎊 Congratulations! Your SkyLab is ready! 🎊${NC}"
+    echo ""
+    echo -e "${CYAN}💡 Pro Tips:${NC}"
+    echo -e "   • Bookmark your service URLs for easy access"
+    echo -e "   • Check service status regularly with ${YELLOW}skylab status${NC}"
+    echo -e "   • Services auto-update nightly via Watchtower"
+    echo -e "   • All data is stored in ${CYAN}$DATA_DIR/appdata${NC}"
+    echo ""
+    echo -e "${BOLD}${CYAN}📁 Installation Summary:${NC}"
+    echo -e "   • Installation files: ${CYAN}$INSTALL_DIR${NC}"
+    echo -e "   • Service data: ${CYAN}$DATA_DIR/appdata${NC}"
+    echo -e "   • Management command: ${CYAN}skylab${NC} (available globally)"
+    echo -e "   • Configuration: ${CYAN}$INSTALL_DIR/.env${NC}"
+    echo -e "   • Docker Compose: ${CYAN}$INSTALL_DIR/docker-compose.yml${NC}"
+    echo ""
+    echo -e "${BOLD}${MAGENTA}🚀 Welcome to the future of home lab management! 🚀${NC}"
+}
+
+# Progress tracking
+show_progress() {
     local current=$1
     local total=$2
-    local step_name="$3"
-    local app_current=${4:-0}
-    local app_total=${5:-1}
-    local app_name="${6:-}"
-    local real_time=${7:-false}
-    
-    local percentage=$((current * 100 / total))
-    local filled=$((current * PROGRESS_WIDTH / total))
-    local empty=$((PROGRESS_WIDTH - filled))
-    
-    if [[ "$real_time" == "true" ]]; then
-        printf "\r${colorBold}[%s] %3d%% [" "$SCRIPT_NAME"
-        printf "%*s" $filled | tr ' ' "$PROGRESS_CHAR"
-        printf "%*s" $empty | tr ' ' "$PROGRESS_EMPTY"
-        printf "] Step %d/%d: %s${colorReset}" $current $total "$step_name"
-        # Add newline for real-time display to prevent concatenation
-        echo ""
-        # Flush output for real-time display
-        sleep 0.1
-    else
-        printf "\r${colorBold}[%s] %3d%% [" "$SCRIPT_NAME"
-        printf "%*s" $filled | tr ' ' "$PROGRESS_CHAR"
-        printf "%*s" $empty | tr ' ' "$PROGRESS_EMPTY"
-        printf "] Step %d/%d: %s${colorReset}" $current $total "$step_name"
-    fi
-    
-    # Show app-level progress if provided
-    if [[ $app_total -gt 1 && -n "$app_name" ]]; then
-        local app_percentage=$((app_current * 100 / app_total))
-        printf "\n${colorCyan}    └─ Installing %s (%d/%d) - %d%%${colorReset}" "$app_name" $app_current $app_total $app_percentage
-    fi
-    
+    local task=$3
+
+    local percent=$((current * 100 / total))
+    local filled=$((percent / 5))
+    local empty=$((20 - filled))
+
+    printf "\r${BOLD}${CYAN}Progress: [${NC}"
+    printf "%*s" $filled | tr ' ' '#'
+    printf "%*s" $empty | tr ' ' '-'
+    printf "${BOLD}${CYAN}] %d%% - %s${NC}" $percent "$task"
+
     if [[ $current -eq $total ]]; then
         echo ""
     fi
 }
 
-# App Installation Progress Tracker
-Show_App_Progress() {
-    local app_name="$1"
-    local current=$2
-    local total=$3
-    local status="$4"  # installing, success, failed
-    
-    local percentage=$((current * 100 / total))
-    local status_icon="⏳"
-    local status_color="$colorYellow"
-    
-    case "$status" in
-        "installing")
-            status_icon="⏳"
-            status_color="$colorYellow"
-            ;;
-        "success")
-            status_icon="✅"
-            status_color="$colorGreen"
-            ;;
-        "failed")
-            status_icon="❌"
-            status_color="$colorRed"
-            ;;
-    esac
-    
-    printf "\r${status_color}${status_icon} [%3d%%] Installing %s...${colorReset}" $percentage "$app_name"
-    
-    if [[ "$status" == "success" || "$status" == "failed" ]]; then
+# Optional services selection
+select_optional_services() {
+    if [[ "$INSTALL_TYPE" == "local" ]]; then
+        return  # No optional services for local installation
+    fi
+
+    print_step "Optional Services Selection"
+
+    echo -e "${BOLD}Would you like to install optional services?${NC}"
+    echo ""
+    echo -e "${CYAN}Available optional services:${NC}"
+    echo ""
+    echo -e "${BOLD}📊 Uptime Kuma${NC} - Service Monitoring"
+    echo -e "   • Monitor all your services 24/7"
+    echo -e "   • Get alerts when services go down"
+    echo -e "   • Beautiful status pages"
+    echo -e "   • Email/Discord/Slack notifications"
+    echo ""
+    echo -e "${BOLD}🏠 Heimdall${NC} - Application Dashboard"
+    echo -e "   • Beautiful homepage for all services"
+    echo -e "   • Custom icons and themes"
+    echo -e "   • Quick access to everything"
+    echo -e "   • Search functionality"
+    echo ""
+
+    INSTALL_MONITORING=false
+    INSTALL_DASHBOARD=false
+
+    while true; do
+        read -p "Install Uptime Kuma (monitoring)? [y/N]: " choice
+        case $choice in
+            [Yy]*)
+                INSTALL_MONITORING=true
+                print_success "Uptime Kuma will be installed"
+                break
+                ;;
+            [Nn]*|"")
+                print_status "Skipping Uptime Kuma"
+                break
+                ;;
+            *)
+                print_warning "Please answer yes (y) or no (n)"
+                ;;
+        esac
+    done
+
+    while true; do
+        read -p "Install Heimdall (dashboard)? [y/N]: " choice
+        case $choice in
+            [Yy]*)
+                INSTALL_DASHBOARD=true
+                print_success "Heimdall will be installed"
+                break
+                ;;
+            [Nn]*|"")
+                print_status "Skipping Heimdall"
+                break
+                ;;
+            *)
+                print_warning "Please answer yes (y) or no (n)"
+                ;;
+        esac
+    done
+
+    if [[ "$INSTALL_MONITORING" == true || "$INSTALL_DASHBOARD" == true ]]; then
+        echo ""
+        echo -e "${GREEN}Optional services selected:${NC}"
+        [[ "$INSTALL_MONITORING" == true ]] && echo -e "   ✅ Uptime Kuma (monitoring)"
+        [[ "$INSTALL_DASHBOARD" == true ]] && echo -e "   ✅ Heimdall (dashboard)"
         echo ""
     fi
 }
 
-# Interactive Step Header
-Step_Header() {
-    local step_num=$1
-    local step_name="$2"
+# Main installation function
+main() {
+    print_banner
+    show_welcome
+
+    # Pre-installation checks
+    show_progress 1 12 "Checking system requirements..."
+    check_root
+    detect_system
+    check_prerequisites
+    check_existing_installation
+
+    # User configuration
+    show_progress 2 12 "Collecting configuration..."
+    show_menu
+    select_optional_services
+
+    # System setup
+    show_progress 3 12 "Installing system dependencies..."
+    install_dependencies
+
+    show_progress 4 12 "Installing Docker..."
+    install_docker
+
+    show_progress 5 12 "Installing Docker Compose..."
+    install_docker_compose
+
+    # Directory and configuration setup
+    show_progress 6 12 "Creating directory structure..."
+    create_directories
+
+    show_progress 7 12 "Generating security secrets..."
+    generate_secrets
+
+    show_progress 8 12 "Creating environment configuration..."
+    create_env_file
+
+    show_progress 9 12 "Creating Docker Compose configuration..."
+    create_docker_compose
+
+    # Advanced setup for proxy installations
+    if [[ "$INSTALL_TYPE" == "cloudflare" || "$INSTALL_TYPE" == "portforward" ]]; then
+        show_progress 10 12 "Configuring Traefik reverse proxy..."
+        create_traefik_config
+        create_authelia_config
+    fi
+
+    # Cloudflare-specific setup
+    if [[ "$INSTALL_TYPE" == "cloudflare" ]]; then
+        show_progress 10 12 "Setting up Cloudflare Tunnel..."
+        setup_cloudflare_tunnel
+    fi
+
+    # Service preparation
+    show_progress 11 12 "Resolving DNS conflicts..."
+    resolve_dns_conflicts
+
+    show_progress 11 12 "Preparing AdGuard Home configuration..."
+    prepare_adguard_config
+
+    show_progress 11 12 "Creating management tools..."
+    create_management_script
+
+    # Final deployment
+    show_progress 12 12 "Deploying services..."
+    deploy_services
+
+    show_progress 12 12 "Installation complete!"
     echo ""
-    echo -e "${colorBold}${colorCyan}╔══════════════════════════════════════════════════════════════════════════════╗${colorReset}"
-    echo -e "${colorBold}${colorCyan}║${colorReset} ${colorBold}Step $step_num/$TOTAL_STEPS: $step_name${colorReset}$(printf "%*s" $((75 - ${#step_name} - ${#step_num} - 8)) "")${colorBold}${colorCyan}║${colorReset}"
-    echo -e "${colorBold}${colorCyan}╚══════════════════════════════════════════════════════════════════════════════╝${colorReset}"
-    Show_Progress $step_num $TOTAL_STEPS "$step_name"
-    echo ""
+
+    show_completion_info
 }
 
-# Animated Spinner for Long Operations
-Spinner() {
-    local pid=$1
-    local message="$2"
-    local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-    local i=0
-    
-    while kill -0 $pid 2>/dev/null; do
-        printf "\r${colorYellow}${spin:$i:1}${colorReset} $message"
-        i=$(( (i+1) % ${#spin} ))
-        sleep 0.1
-    done
-    printf "\r${colorGreen}✓${colorReset} $message\n"
-}
+# Test installation function
+test_installation() {
+    print_step "Testing SkyLab Installation"
 
-Warn() {
-    echo -e "${aCOLOUR[3]}$1$COLOUR_RESET"
-}
+    local errors=0
 
-GreyStart() {
-    echo -e "${aCOLOUR[2]}\c"
-}
-
-ColorReset() {
-    echo -e "$COLOUR_RESET\c"
-}
-
-# Clear Terminal
-Clear_Term() {
-
-    # Without an input terminal, there is no point in doing this.
-    [[ -t 0 ]] || return
-
-    # Printing terminal height - 1 newlines seems to be the fastest method that is compatible with all terminal types.
-    lines=$(tput lines) i newlines
-    local lines
-
-    for ((i = 1; i < ${lines% *}; i++)); do newlines+='\n'; done
-    echo -ne "\e[0m$newlines\e[H"
-
-}
-
-# Check file exists
-exist_file() {
-    if [ -e "$1" ]; then
-        return 1
+    # Test Docker
+    if ! docker --version >/dev/null 2>&1; then
+        print_error "Docker is not working"
+        ((errors++))
     else
-        return 2
+        print_success "Docker is working"
     fi
-}
 
-###############################################################################
-# FUNCTIONS                                                                   #
-###############################################################################
-
-# 0 Get download url domain
-# To solve the problem that Chinese users cannot access github.
-Get_Download_Url_Domain() {
-    # Use ipconfig.io/country and https://ifconfig.io/country_code to get the country code
-    REGION=$(${sudo_cmd} curl --connect-timeout 2 -s ipconfig.io/country || echo "")
-    if [ "${REGION}" = "" ]; then
-       REGION=$(${sudo_cmd} curl --connect-timeout 2 -s https://ifconfig.io/country_code || echo "")
-    fi
-}
-
-# 1 Check Arch
-Check_Arch() {
-    case $UNAME_M in
-    *aarch64*)
-        TARGET_ARCH="arm64"
-        ;;
-    *64*)
-        TARGET_ARCH="amd64"
-        ;;
-    *armv7*)
-        TARGET_ARCH="arm-7"
-        ;;
-    *)
-        Show 1 "Aborted, unsupported or unknown architecture: $UNAME_M"
-        exit 1
-        ;;
-    esac
-    Show 0 "Your hardware architecture is : $UNAME_M"
-}
-
-# 2 Check Distribution
-Check_Distribution() {
-    sType=0
-    notice=""
-    case $LSB_DIST in
-    *debian*) ;;
-
-    *ubuntu*) ;;
-
-    *raspbian*) ;;
-
-    *openwrt*)
-        Show 1 "Aborted, OpenWrt cannot be setup using this script."
-        exit 1
-        ;;
-    *alpine*)
-        Show 1 "Aborted, Alpine setup is not yet supported."
-        exit 1
-        ;;
-    *trisquel*) ;;
-
-    *)
-        sType=3
-        notice="We have not tested it on this system and it may fail to setup."
-        ;;
-    esac
-    Show ${sType} "Your Linux Distribution is : ${DIST} ${notice}"
-
-    if [[ ${sType} == 1 ]]; then
-        select yn in "Yes" "No"; do
-            case $yn in
-            [yY][eE][sS] | [yY])
-                Show 0 "Distribution check has been ignored."
-                break
-                ;;
-            [nN][oO] | [nN])
-                Show 1 "Already exited the setup."
-                exit 1
-                ;;
-            esac
-        done < /dev/tty # < /dev/tty is used to read the input from the terminal
-    fi
-}
-
-# 3 Check OS
-Check_OS() {
-    if [[ $UNAME_U == *Linux* ]]; then
-        Show 0 "Your System is : $UNAME_U"
+    # Test Docker Compose
+    if ! docker-compose --version >/dev/null 2>&1; then
+        print_error "Docker Compose is not working"
+        ((errors++))
     else
-        Show 1 "This script is only for Linux."
-        exit 1
+        print_success "Docker Compose is working"
     fi
-}
 
-# 4 Check Memory
-Check_Memory() {
-    if [[ "${PHYSICAL_MEMORY}" -lt "${MINIMUM_MEMORY}" ]]; then
-        Show 1 "requires atleast 400MB physical memory."
-        exit 1
-    fi
-    Show 0 "Memory capacity check passed."
-}
-
-# 5 Check Disk
-Check_Disk() {
-    if [[ "${FREE_DISK_GB}" -lt "${MINIMUM_DISK_SIZE_GB}" ]]; then
-        echo -e "${aCOLOUR[4]}Recommended free disk space is greater than ${MINIMUM_DISK_SIZE_GB}GB, Current free disk space is ${aCOLOUR[3]}${FREE_DISK_GB}GB${COLOUR_RESET}${aCOLOUR[4]}.\nContinue setup?${COLOUR_RESET}"
-        select yn in "Yes" "No"; do
-            case $yn in
-            [yY][eE][sS] | [yY])
-                Show 0 "Disk capacity check has been ignored."
-                break
-                ;;
-            [nN][oO] | [nN])
-                Show 1 "Already exited the setup."
-                exit 1
-                ;;
-            esac
-        done < /dev/tty  # < /dev/tty is used to read the input from the terminal
+    # Test directory structure
+    if [[ ! -d "$DATA_DIR/appdata" ]]; then
+        print_error "Data directory missing: $DATA_DIR/appdata"
+        ((errors++))
     else
-        Show 0 "Disk capacity check passed."
+        print_success "Data directory exists"
     fi
-}
 
-###############################################################################
-# Configuration Validation Functions                                          #
-###############################################################################
-
-# Validate environment configuration
-Validate_Environment() {
-    Show 5 "Validating environment configuration..."
-    
-    # Check if .env file exists and validate required variables
-    if [[ -f ".env" ]]; then
-        Show 2 "Found .env file, validating configuration..."
-        
-        # Source the .env file safely
-        set -a
-        source .env 2>/dev/null || {
-            Show 3 "Warning: Could not source .env file properly"
-        }
-        set +a
-        
-        # Validate critical environment variables
-        local required_vars=("CASA_OS_VERSION" "DOCKER_COMPOSE_VERSION")
-        local missing_vars=()
-        
-        for var in "${required_vars[@]}"; do
-            if [[ -z "${!var}" ]]; then
-                missing_vars+=("$var")
-            fi
-        done
-        
-        if [[ ${#missing_vars[@]} -gt 0 ]]; then
-            Show 3 "Missing required environment variables: ${missing_vars[*]}"
-            Show 2 "Using default values for missing variables"
-        else
-            Show 0 "Environment configuration validated successfully"
-        fi
+    # Test configuration files
+    if [[ ! -f "$INSTALL_DIR/.env" ]]; then
+        print_error "Environment file missing: $INSTALL_DIR/.env"
+        ((errors++))
     else
-        Show 2 "No .env file found, using default configuration"
+        print_success "Environment file exists"
     fi
-}
 
-# Validate system prerequisites
-Validate_System_Prerequisites() {
-    Show 5 "Validating system prerequisites..."
-    
-    local validation_errors=()
-    
-    # Check internet connectivity
-    if ! ping -c 1 8.8.8.8 >/dev/null 2>&1; then
-        validation_errors+=("No internet connectivity detected")
-    fi
-    
-    # Check if running in container
-    if [[ -f /.dockerenv ]]; then
-        validation_errors+=("Running inside Docker container is not supported")
-    fi
-    
-    # Check for conflicting services
-    if systemctl is-active --quiet apache2 2>/dev/null; then
-        Show 3 "Apache2 is running and may conflict with Docker services"
-    fi
-    
-    if systemctl is-active --quiet nginx 2>/dev/null; then
-        Show 3 "Nginx is running and may conflict with Docker services"
-    fi
-    
-    # Report validation results
-    if [[ ${#validation_errors[@]} -gt 0 ]]; then
-        Show 1 "System validation failed:"
-        for error in "${validation_errors[@]}"; do
-            Show 1 "  - $error"
-        done
-        return 1
+    if [[ ! -f "$INSTALL_DIR/docker-compose.yml" ]]; then
+        print_error "Docker Compose file missing: $INSTALL_DIR/docker-compose.yml"
+        ((errors++))
     else
-        Show 0 "System prerequisites validation passed"
-        return 0
+        print_success "Docker Compose file exists"
     fi
-}
 
-# Enhanced package update with retry logic
-Update_Package_Resource() {
-    Show 2 "Updating package manager..."
-    Log_Message "INFO" "Starting package manager update"
-    
-    local max_retries=3
-    local retry_count=0
-    local update_success=false
-    
-    while [[ $retry_count -lt $max_retries && $update_success == false ]]; do
-        if [[ $retry_count -gt 0 ]]; then
-            Show 2 "Retry attempt $retry_count/$max_retries..."
-            sleep 5
-        fi
-        
-        GreyStart
-        
-        if [ -x "$(command -v apk)" ]; then
-            if ${sudo_cmd} apk update; then
-                update_success=true
-                Log_Message "SUCCESS" "APK package update successful"
-            else
-                Log_Message "WARNING" "APK package update failed on attempt $((retry_count + 1))"
-            fi
-        elif [ -x "$(command -v apt-get)" ]; then
-            if ${sudo_cmd} apt-get update -qq; then
-                update_success=true
-                Log_Message "SUCCESS" "APT package update successful"
-            else
-                Log_Message "WARNING" "APT package update failed on attempt $((retry_count + 1))"
-            fi
-        elif [ -x "$(command -v dnf)" ]; then
-            if ${sudo_cmd} dnf check-update || [[ $? -eq 100 ]]; then  # dnf returns 100 when updates are available
-                update_success=true
-                Log_Message "SUCCESS" "DNF package update successful"
-            else
-                Log_Message "WARNING" "DNF package update failed on attempt $((retry_count + 1))"
-            fi
-        elif [ -x "$(command -v zypper)" ]; then
-            if ${sudo_cmd} zypper refresh; then
-                update_success=true
-                Log_Message "SUCCESS" "Zypper package update successful"
-            else
-                Log_Message "WARNING" "Zypper package update failed on attempt $((retry_count + 1))"
-            fi
-        elif [ -x "$(command -v yum)" ]; then
-            if ${sudo_cmd} yum check-update || [[ $? -eq 100 ]]; then  # yum returns 100 when updates are available
-                update_success=true
-                Log_Message "SUCCESS" "YUM package update successful"
-            else
-                Log_Message "WARNING" "YUM package update failed on attempt $((retry_count + 1))"
-            fi
-        elif [ -x "$(command -v pacman)" ]; then
-            if ${sudo_cmd} pacman -Sy; then
-                update_success=true
-                Log_Message "SUCCESS" "Pacman package update successful"
-            else
-                Log_Message "WARNING" "Pacman package update failed on attempt $((retry_count + 1))"
-            fi
-        else
-            Show 1 "No supported package manager found"
-            Log_Message "ERROR" "No supported package manager detected"
-            return 1
-        fi
-        
-        ColorReset
-        retry_count=$((retry_count + 1))
-    done
-    
-    if [[ $update_success == true ]]; then
-        Show 0 "Package manager update completed successfully"
+    # Test service startup
+    print_status "Testing service startup..."
+    cd "$INSTALL_DIR"
+
+    if ! sudo docker-compose config >/dev/null 2>&1; then
+        print_error "Docker Compose configuration is invalid"
+        ((errors++))
     else
-        Show 3 "Package manager update failed after $max_retries attempts, continuing anyway..."
-        Log_Message "WARNING" "Package update failed after all retry attempts"
+        print_success "Docker Compose configuration is valid"
     fi
-}
 
-###############################################################################
-# Enhanced Dependency Management                                              #
-###############################################################################
-
-# Install dependencies with enhanced error handling and retry logic
-Install_Depends() {
-    Show 2 "Installing system dependencies..."
-    Log_Message "INFO" "Starting dependency installation process"
-    
-    local failed_packages=()
-    local installed_packages=()
-    local skipped_packages=()
-    
-    local total_packages=${#SYSTEM_DEPANDS_COMMAND[@]}
-    
-    for ((i = 0; i < ${#SYSTEM_DEPANDS_COMMAND[@]}; i++)); do
-        cmd=${SYSTEM_DEPANDS_COMMAND[i]}
-        packagesNeeded=${SYSTEM_DEPANDS_PACKAGE[i]}
-        
-        # Update progress for current package
-        local current_progress=$((i + 1))
-        Show_App_Progress "$packagesNeeded" $current_progress $total_packages "installing"
-        
-        # Show real-time progress during installation
-        Show_Progress $current_progress $total_packages "Installing $packagesNeeded" 0 1 "" true
-        
-        # Check if command already exists
-        if [[ -x $(${sudo_cmd} which "$cmd" 2>/dev/null) ]]; then
-            Show 5 "Command '$cmd' already available, skipping $packagesNeeded"
-            skipped_packages+=("$packagesNeeded")
-            Show_App_Progress "$packagesNeeded" $current_progress $total_packages "success"
-            continue
-        fi
-        
-        Show 4 "Installing dependency: $packagesNeeded"
-        Log_Message "INFO" "Installing package: $packagesNeeded for command: $cmd"
-        
-        local install_success=false
-        local max_retries=2
-        local retry_count=0
-        
-        while [[ $retry_count -lt $max_retries && $install_success == false ]]; do
-            if [[ $retry_count -gt 0 ]]; then
-                Show 2 "Retrying installation of $packagesNeeded (attempt $((retry_count + 1))/$max_retries)..."
-                # Update progress for retry attempt
-                Show_Progress $current_progress $total_packages "Retrying $packagesNeeded (attempt $((retry_count + 1))/$max_retries)" 0 1 "" true
-                sleep 3
-            fi
-            
-            # Show installation attempt progress
-            Show_Progress $current_progress $total_packages "Installing $packagesNeeded..." 0 1 "" true
-            
-            GreyStart
-            
-            if [ -x "$(command -v apk)" ]; then
-                if ${sudo_cmd} apk add --no-cache "$packagesNeeded"; then
-                    install_success=true
-                fi
-            elif [ -x "$(command -v apt-get)" ]; then
-                if ${sudo_cmd} apt-get -y -qq install "$packagesNeeded" --no-upgrade; then
-                    install_success=true
-                fi
-            elif [ -x "$(command -v dnf)" ]; then
-                if ${sudo_cmd} dnf install -y "$packagesNeeded"; then
-                    install_success=true
-                fi
-            elif [ -x "$(command -v zypper)" ]; then
-                if ${sudo_cmd} zypper install -y "$packagesNeeded"; then
-                    install_success=true
-                fi
-            elif [ -x "$(command -v yum)" ]; then
-                if ${sudo_cmd} yum install -y "$packagesNeeded"; then
-                    install_success=true
-                fi
-            elif [ -x "$(command -v pacman)" ]; then
-                if ${sudo_cmd} pacman -S --noconfirm "$packagesNeeded"; then
-                    install_success=true
-                fi
-            elif [ -x "$(command -v paru)" ]; then
-                if ${sudo_cmd} paru -S --noconfirm "$packagesNeeded"; then
-                    install_success=true
-                fi
-            else
-                Show 1 "No supported package manager found"
-                Log_Message "ERROR" "No supported package manager detected"
-                failed_packages+=("$packagesNeeded")
-                break
-            fi
-            
-            ColorReset
-            retry_count=$((retry_count + 1))
-        done
-        
-        if [[ $install_success == true ]]; then
-            Show 0 "Successfully installed: $packagesNeeded"
-            Log_Message "SUCCESS" "Package installed successfully: $packagesNeeded"
-            installed_packages+=("$packagesNeeded")
-            Show_App_Progress "$packagesNeeded" $current_progress $total_packages "success"
-            # Show real-time success progress
-            Show_Progress $current_progress $total_packages "Successfully installed $packagesNeeded" 0 1 "" true
-        else
-            Show 1 "Failed to install: $packagesNeeded after $max_retries attempts"
-            Log_Message "ERROR" "Package installation failed: $packagesNeeded"
-            failed_packages+=("$packagesNeeded")
-            Show_App_Progress "$packagesNeeded" $current_progress $total_packages "failed"
-            # Show real-time failure progress
-            Show_Progress $current_progress $total_packages "Failed to install $packagesNeeded" 0 1 "" true
-        fi
-    done
-    
-    # Report installation summary
-    Show 2 "Dependency installation summary:"
-    if [[ ${#installed_packages[@]} -gt 0 ]]; then
-        Show 0 "Installed (${#installed_packages[@]}): ${installed_packages[*]}"
-    fi
-    if [[ ${#skipped_packages[@]} -gt 0 ]]; then
-        Show 2 "Skipped (${#skipped_packages[@]}): ${skipped_packages[*]}"
-    fi
-    if [[ ${#failed_packages[@]} -gt 0 ]]; then
-        Show 1 "Failed (${#failed_packages[@]}): ${failed_packages[*]}"
-        Log_Message "ERROR" "Failed packages: ${failed_packages[*]}"
-        return 1
-    fi
-    
-    Log_Message "SUCCESS" "Dependency installation completed successfully"
-    return 0
-}
-
-# Enhanced dependency verification
-Check_Dependency_Installation() {
-    Show 2 "Verifying dependency installation..."
-    Log_Message "INFO" "Starting dependency verification"
-    
-    local failed_commands=()
-    local verified_commands=()
-    
-    for ((i = 0; i < ${#SYSTEM_DEPANDS_COMMAND[@]}; i++)); do
-        cmd=${SYSTEM_DEPANDS_COMMAND[i]}
-        packagesNeeded=${SYSTEM_DEPANDS_PACKAGE[i]}
-        
-        if [[ -x $(${sudo_cmd} which "$cmd" 2>/dev/null) ]]; then
-            Show 5 "✓ Command verified: $cmd"
-            verified_commands+=("$cmd")
-        else
-            Show 1 "✗ Command not found: $cmd (package: $packagesNeeded)"
-            failed_commands+=("$cmd")
-        fi
-    done
-    
-    # Report verification results
-    if [[ ${#failed_commands[@]} -gt 0 ]]; then
-        Show 1 "Dependency verification failed for: ${failed_commands[*]}"
-        Show 2 "Please install missing dependencies manually and run the script again."
-        Log_Message "ERROR" "Dependency verification failed: ${failed_commands[*]}"
-        return 1
-    else
-        Show 0 "All dependencies verified successfully (${#verified_commands[@]} commands)"
-        Log_Message "SUCCESS" "All dependencies verified: ${verified_commands[*]}"
-        return 0
-    fi
-}
-
-###############################################################################
-# System Health Monitoring                                                    #
-###############################################################################
-
-# System health check function
-Perform_Health_Check() {
-    Show 2 "Performing system health check..."
-    Log_Message "INFO" "Starting system health check"
-    
-    local health_issues=()
-    local health_warnings=()
-    
-    # Check disk space
-    local disk_usage=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
-    if [[ $disk_usage -gt 90 ]]; then
-        health_issues+=("Disk usage is critically high: ${disk_usage}%")
-    elif [[ $disk_usage -gt 80 ]]; then
-        health_warnings+=("Disk usage is high: ${disk_usage}%")
-    fi
-    
-    # Check memory usage
-    local mem_usage=$(free | awk 'NR==2{printf "%.0f", $3*100/$2}')
-    if [[ $mem_usage -gt 95 ]]; then
-        health_issues+=("Memory usage is critically high: ${mem_usage}%")
-    elif [[ $mem_usage -gt 85 ]]; then
-        health_warnings+=("Memory usage is high: ${mem_usage}%")
-    fi
-    
-    # Check system load
-    local load_avg=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | sed 's/,//')
-    local cpu_cores=$(nproc)
-    if (( $(echo "$load_avg > $cpu_cores * 2" | bc -l) )); then
-        health_warnings+=("System load is high: $load_avg (cores: $cpu_cores)")
-    fi
-    
-    # Check for zombie processes
-    local zombie_count=$(ps aux | awk '$8 ~ /^Z/ { count++ } END { print count+0 }')
-    if [[ $zombie_count -gt 0 ]]; then
-        health_warnings+=("Found $zombie_count zombie processes")
-    fi
-    
-    # Report health status
-    if [[ ${#health_issues[@]} -gt 0 ]]; then
-        Show 1 "Critical health issues detected:"
-        for issue in "${health_issues[@]}"; do
-            Show 1 "  - $issue"
-            Log_Message "ERROR" "Health issue: $issue"
-        done
-        return 1
-    elif [[ ${#health_warnings[@]} -gt 0 ]]; then
-        Show 3 "Health warnings detected:"
-        for warning in "${health_warnings[@]}"; do
-            Show 3 "  - $warning"
-            Log_Message "WARNING" "Health warning: $warning"
-        done
+    if [[ $errors -eq 0 ]]; then
+        print_success "All installation tests passed!"
         return 0
     else
-        Show 0 "System health check passed"
-        Log_Message "SUCCESS" "System health check completed successfully"
-        return 0
-    fi
-}
-
-Check_Dependency_Installation() {
-    local failed_packages=()
-    for ((i = 0; i < ${#SYSTEM_DEPANDS_COMMAND[@]}; i++)); do
-        cmd=${SYSTEM_DEPANDS_COMMAND[i]}
-        if [[ ! -x $(${sudo_cmd} which "$cmd" 2>/dev/null) ]]; then
-            packagesNeeded=${SYSTEM_DEPANDS_PACKAGE[i]}
-            failed_packages+=("$packagesNeeded")
-        fi
-    done
-    
-    if [[ ${#failed_packages[@]} -gt 0 ]]; then
-        Show 1 "The following dependencies failed to install: ${failed_packages[*]}"
-        Show 2 "Please install them manually and run the script again."
-        exit 1
-    else
-        Show 0 "All system dependencies installed successfully."
-    fi
-}
-
-# Check Docker running
-Check_Docker_Running() {
-    for ((i = 1; i <= 3; i++)); do
-        sleep 3
-        if [[ ! $(${sudo_cmd} systemctl is-active docker) == "active" ]]; then
-            Show 1 "Docker is not running, try to start"
-            ${sudo_cmd} systemctl start docker
-        else
-            break
-        fi
-    done
-}
-
-#Check Docker Installed and version
-Check_Docker_Install() {
-    if [[ -x "$(command -v docker)" ]]; then
-        Docker_Version=$(${sudo_cmd} docker version --format '{{.Server.Version}}')
-        if [[ $? -ne 0 ]]; then
-            Install_Docker
-        elif [[ ${Docker_Version:0:2} -lt "${MINIMUM_DOCKER_VERSION}" ]]; then
-            Show 1 "Recommended minimum Docker version is \e[33m${MINIMUM_DOCKER_VERSION}.xx.xx\e[0m,\Current Docker version is \e[33m${Docker_Version}\e[0m,\nPlease uninstall current Docker and rerun the setup script."
-            exit 1
-        else
-            Show 0 "Current Docker version is ${Docker_Version}."
-        fi
-    else
-        Install_Docker
-    fi
-}
-
-# Check Docker installed
-Check_Docker_Install_Final() {
-    if [[ -x "$(command -v docker)" ]]; then
-        Docker_Version=$(${sudo_cmd} docker version --format '{{.Server.Version}}')
-        if [[ $? -ne 0 ]]; then
-            Install_Docker
-        elif [[ ${Docker_Version:0:2} -lt "${MINIMUM_DOCKER_VERSION}" ]]; then
-            Show 1 "Recommended minimum Docker version is \e[33m${MINIMUM_DOCKER_VERSION}.xx.xx\e[0m,\Current Docker version is \e[33m${Docker_Version}\e[0m,\nPlease uninstall current Docker and rerun the setup script."
-            exit 1
-        else
-            Show 0 "Current Docker version is ${Docker_Version}."
-            Check_Docker_Running
-        fi
-    else
-        Show 1 "Installation failed, please run 'curl -fsSL https://get.docker.com | bash' and rerun the setup script."
-        exit 1
-    fi
-}
-
-#Install Docker
-Install_Docker() {
-  Show 2 "Install the necessary dependencies: \e[33mDocker \e[0m"
-  if [[ ! -d "${PREFIX}/etc/apt/sources.list.d" ]]; then
-      ${sudo_cmd} mkdir -p "${PREFIX}/etc/apt/sources.list.d"
-  fi
-  
-  # Ensure proper permissions for Docker installation
-  ${sudo_cmd} chmod 755 "${PREFIX}/etc/apt/sources.list.d" 2>/dev/null || true
-  
-  # Create a temporary file for the installation output with proper permissions
-  local temp_file=$(mktemp)
-  chmod 644 "$temp_file" 2>/dev/null || true
-  
-  # Run the installation in the background
-  if [[ "${REGION}" = "China" ]] || [[ "${REGION}" = "CN" ]]; then
-    (${sudo_cmd} curl -fsSL https://play.cuse.eu.org/get_docker.sh | bash -s docker --mirror Aliyun > "$temp_file" 2>&1) &
-  else
-    (${sudo_cmd} curl -fsSL https://get.docker.com | bash > "$temp_file" 2>&1) &
-  fi
-  
-  # Get the process ID
-  local pid=$!
-  
-  # Show spinner while Docker is installing
-  Spinner $pid "Installing Docker Engine and CLI tools..."
-  
-  # Check if the installation was successful
-  wait $pid
-  if [ $? -ne 0 ]; then
-    Show 1 "Docker installation failed. See details below:"
-    cat "$temp_file"
-    rm -f "$temp_file"
-    exit 1
-  fi
-  
-  rm -f "$temp_file"
-  
-  # Add current user to docker group if not root
-  if [[ $EUID -ne 0 ]] && [[ -n "$SUDO_USER" ]]; then
-    Show 4 "Adding user $SUDO_USER to docker group..."
-    ${sudo_cmd} usermod -aG docker "$SUDO_USER" || {
-      Show 3 "Failed to add user to docker group. You may need to log out and back in."
-    }
-    Show 2 "Note: You may need to log out and back in for docker group membership to take effect."
-  elif [[ $EUID -ne 0 ]]; then
-    current_user=$(whoami)
-    Show 4 "Adding user $current_user to docker group..."
-    ${sudo_cmd} usermod -aG docker "$current_user" || {
-      Show 3 "Failed to add user to docker group. You may need to log out and back in."
-    }
-    Show 2 "Note: You may need to log out and back in for docker group membership to take effect."
-  fi
-  
-  # Ensure Docker socket has proper permissions
-  if [[ -S "/var/run/docker.sock" ]]; then
-    Show 4 "Setting Docker socket permissions..."
-    ${sudo_cmd} chmod 666 /var/run/docker.sock 2>/dev/null || {
-      Show 3 "Could not modify Docker socket permissions - this may be normal"
-    }
-  fi
-  
-  Check_Docker_Install_Final
-}
-
-#Install Rclone
-Install_rclone_from_source() {
-  Show 4 "Downloading Rclone installer..."
-  # Create temporary directory with proper permissions
-  local temp_dir=$(mktemp -d)
-  cd "$temp_dir" || {
-    Show 1 "Failed to create temporary directory for Rclone installation"
-    exit 1
-  }
-  
-  ${sudo_cmd} wget -qO ./install.sh https://rclone.org/install.sh || {
-    Show 1 "Failed to download Rclone installer"
-    cd - >/dev/null
-    rm -rf "$temp_dir"
-    exit 1
-  }
-  
-  # Modify download source based on region
-  if [[ "${REGION}" = "China" ]] || [[ "${REGION}" = "CN" ]]; then
-    Show 4 "Using optimized download source for your region..."
-    sed -i 's/downloads.rclone.org/get.homelabos.io/g' ./install.sh
-  else
-    Show 4 "Using standard download source..."
-    # Keep original download source for better reliability
-    # sed -i 's/downloads.rclone.org/get.homelabos.io/g' ./install.sh
-  fi
-  
-  ${sudo_cmd} chmod +x ./install.sh
-  
-  # Create a temporary file for the installation output with proper permissions
-  local temp_file=$(mktemp)
-  chmod 644 "$temp_file" 2>/dev/null || true
-  
-  # Run the installation in the background
-  (${sudo_cmd} ./install.sh > "$temp_file" 2>&1) &
-  
-  # Get the process ID
-  local pid=$!
-  
-  # Show spinner while Rclone is installing
-  Spinner $pid "Installing Rclone cloud storage client..."
-  
-  # Check if the installation was successful
-  wait $pid
-  local exit_code=$?
-  if [ $exit_code -ne 0 ]; then
-    Show 1 "Rclone installation failed with exit code $exit_code. See details below:"
-    cat "$temp_file"
-    
-    # Try fallback installation method
-    Show 3 "Attempting fallback installation method..."
-    if Install_rclone_fallback; then
-      Show 0 "Rclone installed successfully using fallback method."
-    else
-      ${sudo_cmd} rm -rf install.sh
-      rm -f "$temp_file"
-      Show 1 "Both primary and fallback Rclone installation methods failed."
-      Show 3 "You can manually install Rclone later using: curl https://rclone.org/install.sh | sudo bash"
-      return 1
-    fi
-  fi
-  
-  rm -f "$temp_file"
-  
-  # Clean up temporary directory
-  cd - >/dev/null
-  rm -rf "$temp_dir"
-  Show 0 "Rclone v1.61.1 installed successfully."
-}
-
-# Fallback Rclone installation method
-Install_rclone_fallback() {
-  Show 4 "Trying alternative Rclone installation method..."
-  
-  # Try direct download and installation
-  local arch="$(uname -m)"
-  local os="linux"
-  local rclone_version="v1.61.1"
-  
-  case "$arch" in
-    x86_64) arch="amd64" ;;
-    aarch64|arm64) arch="arm64" ;;
-    armv7l) arch="arm" ;;
-    *) 
-      Show 1 "Unsupported architecture: $arch"
-      return 1
-      ;;
-  esac
-  
-  local download_url="https://downloads.rclone.org/${rclone_version}/rclone-${rclone_version}-${os}-${arch}.zip"
-  local temp_dir=$(mktemp -d)
-  
-  Show 4 "Downloading Rclone ${rclone_version} for ${os}-${arch}..."
-  
-  cd "$temp_dir" || return 1
-  
-  if ${sudo_cmd} wget -q "$download_url" -O rclone.zip; then
-    Show 4 "Extracting Rclone..."
-    if ${sudo_cmd} unzip -q rclone.zip; then
-      local rclone_dir="rclone-${rclone_version}-${os}-${arch}"
-      if [[ -d "$rclone_dir" ]]; then
-        Show 4 "Installing Rclone binary..."
-        ${sudo_cmd} cp "$rclone_dir/rclone" /usr/local/bin/
-        ${sudo_cmd} chmod +x /usr/local/bin/rclone
-        
-        # Install man page if available
-        if [[ -f "$rclone_dir/rclone.1" ]]; then
-          ${sudo_cmd} mkdir -p /usr/local/share/man/man1
-          ${sudo_cmd} cp "$rclone_dir/rclone.1" /usr/local/share/man/man1/
-        fi
-        
-        cd - >/dev/null
-        rm -rf "$temp_dir"
-        
-        # Verify installation
-        if command -v rclone >/dev/null 2>&1; then
-          Show 0 "Rclone fallback installation completed successfully."
-          return 0
-        else
-          Show 1 "Rclone binary installed but not found in PATH."
-          return 1
-        fi
-      else
-        Show 1 "Rclone extraction directory not found."
-        cd - >/dev/null
-        rm -rf "$temp_dir"
+        print_error "Installation test failed with $errors errors"
+        print_status "Please check the issues above before proceeding"
         return 1
-      fi
-    else
-      Show 1 "Failed to extract Rclone archive."
-      cd - >/dev/null
-      rm -rf "$temp_dir"
-      return 1
-    fi
-  else
-    Show 1 "Failed to download Rclone from fallback source."
-    cd - >/dev/null
-    rm -rf "$temp_dir"
-    return 1
-  fi
-}
-
-Install_Rclone() {
-  Show 2 "Setting up Rclone cloud storage integration..."
-  if [[ -x "$(command -v rclone)" ]]; then
-    version=$(rclone --version 2>>errors | head -n 1)
-    target_version="rclone v1.61.1"
-    rclone1="${PREFIX}/usr/share/man/man1/rclone.1.gz"
-    if [ "$version" != "$target_version" ]; then
-      Show 3 "Updating Rclone from $version to $target_version..."
-      rclone_path=$(command -v rclone)
-      ${sudo_cmd} rm -rf "${rclone_path}"
-      if [[ -f "$rclone1" ]]; then
-        ${sudo_cmd} rm -rf "$rclone1"
-      fi
-      if ! Install_rclone_from_source; then
-        Show 3 "Rclone installation failed, but continuing with setup..."
-        return 1
-      fi
-    else
-      Show 0 "Rclone $target_version already installed."
-    fi
-  else
-    Show 4 "Rclone not found, installing..."
-    if ! Install_rclone_from_source; then
-      Show 3 "Rclone installation failed, but continuing with setup..."
-      return 1
-    fi
-  fi
-  
-  # Enable Rclone service if available
-  Show 4 "Configuring Rclone service..."
-  if ${sudo_cmd} systemctl enable rclone 2>/dev/null; then
-    Show 0 "Rclone service enabled successfully."
-  else 
-    Show 3 "Rclone systemd service not available - this is normal on some distributions."
-  fi
-  
-  # Verify Rclone installation
-  if rclone --version > /dev/null 2>&1; then
-    Show 0 "Rclone installation verified successfully."
-  else
-    Show 3 "Rclone installation verification failed. You may need to restart your terminal."
-  fi
-}
-
-#Install LazyDocker
-Install_LazyDocker() {
-  Show 2 "Installing LazyDocker terminal UI..."
-  if [[ -x "$(command -v lazydocker)" ]]; then
-    Show 2 "LazyDocker already installed."
-  else
-    # Create a temporary file for the installation output with proper permissions
-    local temp_file=$(mktemp)
-    chmod 644 "$temp_file" 2>/dev/null || true
-    
-    # Run the installation in the background
-    (${sudo_cmd} curl https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh | bash > "$temp_file" 2>&1) &
-    
-    # Get the process ID
-    local pid=$!
-    
-    # Show spinner while LazyDocker is installing
-    Spinner $pid "Downloading and installing LazyDocker..."
-    
-    # Check if the installation was successful
-    wait $pid
-    if [ $? -ne 0 ]; then
-      Show 1 "LazyDocker installation failed. See details below:"
-      cat "$temp_file"
-      rm -f "$temp_file"
-      exit 1
-    fi
-    
-    rm -f "$temp_file"
-    Show 0 "LazyDocker installed successfully."
-  fi
-}
-
-#Install Watchtower
-Install_Watchtower() {
-  Show 2 "Setting up Watchtower auto-update service..."
-  if ${sudo_cmd} docker ps -a --format "table {{.Names}}" | grep -q "watchtower"; then
-    Show 2 "Watchtower container already exists."
-    
-    # Check if it's running
-    if ! ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "watchtower"; then
-      Show 3 "Watchtower container exists but is not running. Starting it..."
-      ${sudo_cmd} docker start watchtower
-      Show 0 "Watchtower container started."
-    fi
-  else
-    Show 4 "Pulling Watchtower image..."
-    ${sudo_cmd} docker pull containrrr/watchtower > /dev/null 2>&1 &
-    local pull_pid=$!
-    Spinner $pull_pid "Downloading Watchtower container image..."
-    wait $pull_pid
-    
-    Show 4 "Creating and starting Watchtower container..."
-    ${sudo_cmd} docker run -d \
-      --name watchtower \
-      --restart unless-stopped \
-      -v /var/run/docker.sock:/var/run/docker.sock \
-      containrrr/watchtower --cleanup --interval 86400 || {
-      Show 1 "Watchtower installation failed, please try again."
-      exit 1
-    }
-    
-    # Verify it's running
-    if ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "watchtower"; then
-      Show 0 "Watchtower installed and running successfully."
-      Show 2 "Configured to check for updates daily and clean up old images."
-    else
-      Show 1 "Watchtower container created but failed to start."
-      exit 1
-    fi
-  fi
-}
-
-#Install Filebrowser
-Install_Filebrowser() {
-  Show 2 "Setting up Filebrowser web file manager..."
-  
-  # Check if Filebrowser container already exists
-  if ${sudo_cmd} docker ps -a --format "table {{.Names}}" | grep -q "filebrowser"; then
-    Show 2 "Filebrowser container already exists."
-    
-    # Check if it's running
-    if ! ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "filebrowser"; then
-      Show 3 "Filebrowser container exists but is not running. Starting it..."
-      ${sudo_cmd} docker start filebrowser
-      Show 0 "Filebrowser container started."
-    fi
-  else
-    # Create directories for Filebrowser with proper permissions
-    Show 4 "Creating Filebrowser directories..."
-    ${sudo_cmd} mkdir -p /data/appdata/filebrowser/config
-    ${sudo_cmd} mkdir -p /data/appdata/filebrowser/data
-    
-    # Set proper ownership and permissions
-    ${sudo_cmd} chmod 755 /data/appdata/filebrowser
-    ${sudo_cmd} chmod 755 /data/appdata/filebrowser/config
-    ${sudo_cmd} chmod 755 /data/appdata/filebrowser/data
-    
-    # If not running as root, try to set ownership to current user
-    if [[ $EUID -ne 0 ]] && [[ -n "$SUDO_USER" ]]; then
-      ${sudo_cmd} chown -R "$SUDO_USER:$SUDO_USER" /data/appdata/filebrowser 2>/dev/null || {
-        Show 3 "Could not change ownership of /data/appdata/filebrowser to $SUDO_USER"
-      }
-    fi
-    
-    Show 4 "Pulling Filebrowser image..."
-    ${sudo_cmd} docker pull filebrowser/filebrowser > /dev/null 2>&1 &
-    local pull_pid=$!
-    Spinner $pull_pid "Downloading Filebrowser container image..."
-    wait $pull_pid
-    
-    Show 4 "Creating and starting Filebrowser container..."
-    ${sudo_cmd} docker run -d \
-      --name filebrowser \
-      --restart unless-stopped \
-      -p 8080:80 \
-      -v /data/appdata/filebrowser/config:/config \
-      -v /data/appdata/filebrowser/data:/srv \
-      -v /:/mnt/host:ro \
-      filebrowser/filebrowser || {
-      Show 1 "Filebrowser installation failed, please try again."
-      exit 1
-    }
-    
-    # Verify it's running
-    if ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "filebrowser"; then
-      Show 0 "Filebrowser installed and running successfully."
-      Show 2 "Access at: http://localhost:8080"
-      Show 3 "Default login: admin/admin (Change this immediately!)"
-    else
-      Show 1 "Filebrowser container created but failed to start."
-      exit 1
-    fi
-  fi
-}
-
-# Install PiVPN (Containerized OpenVPN Server)
-Install_AdGuard() {
-    Show 2 "Setting up AdGuard Home (DNS Ad Blocker)..."
-    
-    # Load configuration values with defaults
-    local adguard_port=${ADGUARD_PORT:-3000}
-    local adguard_dns_port=${ADGUARD_DNS_PORT:-53}
-    local adguard_data_dir=${ADGUARD_DATA_DIR:-/data/appdata/adguard/data}
-    local adguard_config_dir=${ADGUARD_CONFIG_DIR:-/data/appdata/adguard/config}
-    local adguard_work_dir=${ADGUARD_WORK_DIR:-/data/appdata/adguard/work}
-    local adguard_version=${ADGUARD_VERSION:-latest}
-    
-    # Check if container already exists
-    if ${sudo_cmd} docker ps -a --format "table {{.Names}}" | grep -q "adguard"; then
-        Show 2 "AdGuard Home container already exists."
-        
-        # Check if it's running
-        if ! ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "adguard"; then
-            Show 3 "AdGuard Home container exists but is not running. Starting it..."
-            ${sudo_cmd} docker start adguard
-            Show 0 "AdGuard Home container started."
-        fi
-    else
-        # Create directories with proper permissions
-        Show 4 "Creating AdGuard Home directories..."
-        ${sudo_cmd} mkdir -p /data/appdata/adguard
-        ${sudo_cmd} mkdir -p "$adguard_data_dir"
-        ${sudo_cmd} mkdir -p "$adguard_config_dir"
-        ${sudo_cmd} mkdir -p "$adguard_work_dir"
-        ${sudo_cmd} chmod 755 /data/appdata/adguard
-        ${sudo_cmd} chmod 755 "$adguard_data_dir"
-        ${sudo_cmd} chmod 755 "$adguard_config_dir"
-        ${sudo_cmd} chmod 755 "$adguard_work_dir"
-        
-        # Set ownership if not root
-        if [[ $EUID -ne 0 ]] && [[ -n "$SUDO_USER" ]]; then
-            ${sudo_cmd} chown -R "$SUDO_USER:$SUDO_USER" /data/appdata/adguard 2>/dev/null || {
-                Show 3 "Could not change ownership of /data/appdata/adguard to $SUDO_USER"
-            }
-        fi
-        
-        # Pull and run AdGuard Home container
-        Show 4 "Pulling AdGuard Home image..."
-        ${sudo_cmd} docker pull adguard/adguardhome:$adguard_version > /dev/null 2>&1 &
-        local pull_pid=$!
-        Spinner $pull_pid "Downloading AdGuard Home container image..."
-        wait $pull_pid
-        
-        Show 4 "Creating and starting AdGuard Home container..."
-        ${sudo_cmd} docker run -d \
-            --name adguard \
-            --restart unless-stopped \
-            -p $adguard_port:3000/tcp \
-            -p $adguard_dns_port:53/tcp \
-            -p $adguard_dns_port:53/udp \
-            -v "$adguard_config_dir:/opt/adguardhome/conf" \
-            -v "$adguard_work_dir:/opt/adguardhome/work" \
-            adguard/adguardhome:$adguard_version || {
-            Show 1 "AdGuard Home installation failed, please try again."
-            exit 1
-        }
-        
-        # Wait for container to initialize
-        Show 4 "Waiting for AdGuard Home to initialize..."
-        sleep 15
-        
-        # Verify installation
-        if ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "adguard"; then
-            Show 0 "AdGuard Home installed and running successfully."
-            
-            # Get server IP for setup instructions
-            local server_ip=$(curl -s ifconfig.me 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || hostname -I | awk '{print $1}')
-            if [[ -z "$server_ip" ]]; then
-                server_ip=$(hostname -I | awk '{print $1}')
-            fi
-            
-            Show 2 "AdGuard Home web interface available at: http://$server_ip:$adguard_port"
-            Show 2 "DNS server configured on port: $adguard_dns_port"
-            Show 3 "Complete the initial setup through the web interface."
-        else
-            Show 1 "AdGuard Home container created but failed to start."
-            exit 1
-        fi
     fi
 }
 
-#Configuration Addons
-Configuration_Addons() {
-    Show 2 "Configuration System Addons"
-    #Remove old udev rules
-    if [[ -f "${PREFIX}/etc/udev/rules.d/11-usb-mount.rules" ]]; then
-        ${sudo_cmd} rm -rf "${PREFIX}/etc/udev/rules.d/11-usb-mount.rules"
-    fi
-
-    if [[ -f "${PREFIX}/etc/systemd/system/usb-mount@.service" ]]; then
-        ${sudo_cmd} rm -rf "${PREFIX}/etc/systemd/system/usb-mount@.service"
-    fi
-
-    #Udevil
-    if [[ -f $PREFIX${UDEVIL_CONF_PATH} ]]; then
-
-        # GreyStart
-        # Add a devmon user with proper error handling
-        USERNAME=devmon
-        if ! id ${USERNAME} &>/dev/null; then
-            Show 4 "Creating devmon user for USB auto-mounting..."
-            ${sudo_cmd} useradd -M -u 300 ${USERNAME} 2>/dev/null || {
-                # If UID 300 is taken, let system assign one
-                ${sudo_cmd} useradd -M ${USERNAME} 2>/dev/null || {
-                    Show 3 "User devmon may already exist or creation failed"
-                }
-            }
-            ${sudo_cmd} usermod -L ${USERNAME} 2>/dev/null || true
-        else
-            Show 2 "User devmon already exists"
-        fi
-
-        # Configure udevil with proper error handling
-        Show 4 "Configuring udevil for USB auto-mounting..."
-        ${sudo_cmd} sed -i '/exfat/s/, nonempty//g' "$PREFIX"${UDEVIL_CONF_PATH} 2>/dev/null || {
-            Show 3 "Could not modify exfat options in udevil.conf"
-        }
-        ${sudo_cmd} sed -i '/default_options/s/, noexec//g' "$PREFIX"${UDEVIL_CONF_PATH} 2>/dev/null || {
-            Show 3 "Could not modify default_options in udevil.conf"
-        }
-        
-        # Configure devmon if config file exists
-        if [[ -f "$PREFIX"${DEVMON_CONF_PATH} ]]; then
-            ${sudo_cmd} sed -i '/^ARGS/cARGS="--mount-options nosuid,nodev,noatime --ignore-label EFI"' "$PREFIX"${DEVMON_CONF_PATH} 2>/dev/null || {
-                Show 3 "Could not modify devmon configuration"
-            }
-        fi
-
-        # Add and start Devmon service with error handling
-        Show 4 "Enabling and starting devmon service..."
-        GreyStart
-        ${sudo_cmd} systemctl enable devmon@devmon 2>/dev/null || {
-            Show 3 "Could not enable devmon service - this may be normal on some systems"
-        }
-        ${sudo_cmd} systemctl start devmon@devmon 2>/dev/null || {
-            Show 3 "Could not start devmon service - this may be normal on some systems"
-        }
-        ColorReset
-        # ColorReset
-    fi
-}
-
-# Install SkyLab Homepage
-Install_Homepage() {
-    Show 2 "Installing SkyLab Homepage Dashboard..."
-    
-    local homepage_dir="${APP_DATA_BASE_DIR:-/data/appdata}/homepage"
-    local homepage_port=${HOMEPAGE_PORT:-8888}
-    
-    # Create homepage directory
-    Show 4 "Creating homepage directory..."
-    ${sudo_cmd} mkdir -p "$homepage_dir"
-    ${sudo_cmd} chmod 755 "$homepage_dir"
-    
-    # Set ownership if not root
-    if [[ $EUID -ne 0 ]] && [[ -n "$SUDO_USER" ]]; then
-        ${sudo_cmd} chown -R "$SUDO_USER:$SUDO_USER" "$homepage_dir" 2>/dev/null || {
-            Show 3 "Could not change ownership of $homepage_dir to $SUDO_USER"
-        }
-    fi
-    
-    # Check if homepage files exist in the script directory
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [[ -f "$script_dir/homepage/index.html" ]]; then
-        Show 4 "Copying homepage files..."
-        ${sudo_cmd} cp -r "$script_dir/homepage/"* "$homepage_dir/" 2>/dev/null || {
-            Show 3 "Could not copy homepage files"
-        }
-        ${sudo_cmd} chmod +x "$homepage_dir/server.py" 2>/dev/null || true
-    else
-        Show 4 "Creating default homepage..."
-        # Create a simple default homepage if files don't exist
-        cat > "$homepage_dir/index.html" << 'EOF'
-<!DOCTYPE html>
-<html><head><title>SkyLab Dashboard</title></head>
-<body style="font-family: monospace; background: #000; color: #0f0; padding: 20px;">
-<h1>🚀 SkyLab Command Center</h1>
-<p>Your homelab services:</p>
-<ul>
-<li><a href="http://localhost:8080" style="color: #0ff;">Filebrowser</a></li>
-<li><a href="http://localhost:3000" style="color: #0ff;">AdGuard Home</a></li>
-<li><a href="http://localhost:9000" style="color: #0ff;">Portainer</a></li>
-</ul>
-</body></html>
-EOF
-    fi
-    
-    # Check if homepage container already exists
-    if ${sudo_cmd} docker ps -a --format "table {{.Names}}" | grep -q "skylab-homepage"; then
-        Show 2 "SkyLab Homepage container already exists."
-        
-        # Check if it's running
-        if ! ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "skylab-homepage"; then
-            Show 3 "Homepage container exists but is not running. Starting it..."
-            ${sudo_cmd} docker start skylab-homepage
-            Show 0 "Homepage container started."
-        fi
-    else
-        Show 4 "Creating and starting homepage container..."
-        ${sudo_cmd} docker run -d \
-            --name skylab-homepage \
-            --restart unless-stopped \
-            -p $homepage_port:80 \
-            -v "$homepage_dir:/usr/share/nginx/html:ro" \
-            nginx:alpine || {
-            Show 3 "Homepage container creation failed, but continuing..."
-            return 0
-        }
-        
-        # Wait for container to initialize
-        Show 4 "Waiting for homepage to initialize..."
-        sleep 5
-        
-        # Verify installation
-        if ${sudo_cmd} docker ps --format "table {{.Names}}" | grep -q "skylab-homepage"; then
-            Show 0 "SkyLab Homepage installed and running successfully."
-            
-            # Get server IP for access instructions
-            local server_ip=$(curl -s ifconfig.me 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || hostname -I | awk '{print $1}')
-            if [[ -z "$server_ip" ]]; then
-                server_ip=$(hostname -I | awk '{print $1}')
-            fi
-            
-            Show 2 "Homepage available at: http://$server_ip:$homepage_port"
-            Show 2 "Local access: http://localhost:$homepage_port"
-        else
-            Show 3 "Homepage container created but may not be running properly."
-        fi
-    fi
-}
-
-# Show completion banner
-Completion_Banner() {
-    clear
-    echo -e "${colorCyan}${colorBold}"
-    echo "    ███████╗██╗  ██╗██╗   ██╗██╗      █████╗ ██████╗ "
-    echo "    ██╔════╝██║ ██╔╝╚██╗ ██╔╝██║     ██╔══██╗██╔══██╗"
-    echo "    ███████╗█████╔╝  ╚████╔╝ ██║     ███████║██████╔╝"
-    echo "    ╚════██║██╔═██╗   ╚██╔╝  ██║     ██╔══██║██╔══██╗"
-    echo "    ███████║██║  ██╗   ██║   ███████╗██║  ██║██████╔╝"
-    echo "    ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚═════╝ "
-    echo -e "${colorReset}"
-    
-    echo -e "${colorGreen}${colorBold}╔══════════════════════════════════════════════════════════════════════════════╗${colorReset}"
-    echo -e "${colorGreen}${colorBold}║${colorReset}${colorBold} 🎉 SETUP COMPLETE! Your home lab environment is ready!${colorReset}$(printf "%*s" 25 "")${colorGreen}${colorBold}║${colorReset}"
-    echo -e "${colorGreen}${colorBold}╚══════════════════════════════════════════════════════════════════════════════╝${colorReset}"
-    
-    echo -e "\n${colorBold}${colorMagenta}✅ INSTALLED COMPONENTS:${colorReset}"
-    echo -e "   ${colorGreen}•${colorReset} Docker Engine ${colorDim}(Container runtime)${colorReset}"
-    echo -e "   ${colorGreen}•${colorReset} USB Auto-mounting ${colorDim}(udevil/devmon)${colorReset}"
-    echo -e "   ${colorGreen}•${colorReset} System Dependencies ${colorDim}(curl, wget, net-tools, etc.)${colorReset}"
-    echo -e "   ${colorGreen}•${colorReset} Rclone ${colorDim}(Cloud storage integration)${colorReset}"
-    echo -e "   ${colorGreen}•${colorReset} LazyDocker ${colorDim}(Terminal UI for Docker)${colorReset}"
-    echo -e "   ${colorGreen}•${colorReset} Watchtower ${colorDim}(Automatic container updates)${colorReset}"
-    echo -e "   ${colorGreen}•${colorReset} Filebrowser ${colorDim}(Web-based file management)${colorReset}"
-    echo -e "   ${colorGreen}•${colorReset} AdGuard Home ${colorDim}(DNS Ad Blocker)${colorReset}"
-    echo -e "   ${colorGreen}•${colorReset} SkyLab Homepage ${colorDim}(Homelab dashboard)${colorReset}"
-    
-    echo -e "\n${colorBold}${colorYellow}🚀 NEXT STEPS:${colorReset}"
-    echo -e "   ${colorBlue}1.${colorReset} Access SkyLab Dashboard: ${colorDim}http://localhost:8888${colorReset}"
-    echo -e "   ${colorBlue}2.${colorReset} Access Filebrowser: ${colorDim}http://localhost:8080 (admin/admin)${colorReset}"
-    echo -e "   ${colorBlue}3.${colorReset} Access AdGuard Home: ${colorDim}http://localhost:3000${colorReset}"
-    echo -e "   ${colorBlue}4.${colorReset} Configure DNS settings: ${colorDim}Point devices to this server's IP:5353${colorReset}"
-    echo -e "   ${colorBlue}5.${colorReset} Start LazyDocker: ${colorDim}lazydocker${colorReset}"
-    echo -e "   ${colorBlue}6.${colorReset} Check Docker status: ${colorDim}docker ps${colorReset}"
-    
-    echo -e "\n${colorBold}${colorCyan}📚 USEFUL COMMANDS:${colorReset}"
-    echo -e "   ${colorGreen}•${colorReset} ${colorDim}docker ps${colorReset} - List running containers"
-    echo -e "   ${colorGreen}•${colorReset} ${colorDim}docker-compose up -d${colorReset} - Start services defined in docker-compose.yml"
-    echo -e "   ${colorGreen}•${colorReset} ${colorDim}lazydocker${colorReset} - Open the Docker management UI"
-    echo -e "   ${colorGreen}•${colorReset} ${colorDim}rclone config${colorReset} - Configure cloud storage connections"
-    echo -e "   ${colorGreen}•${colorReset} ${colorDim}http://localhost:8888${colorReset} - Access SkyLab homepage dashboard"
-    echo -e "   ${colorGreen}•${colorReset} ${colorDim}http://localhost:8080${colorReset} - Access Filebrowser web interface"
-    echo -e "   ${colorGreen}•${colorReset} ${colorDim}docker logs adguard${colorReset} - View AdGuard Home logs"
-    echo -e "   ${colorGreen}•${colorReset} ${colorDim}http://localhost:3000${colorReset} - Access AdGuard Home web interface"
-    
-    echo -e "\n${colorBold}${colorGreen}💖 Thank you for using SkyLab! ${colorReset}${colorDim}(v$SCRIPT_VERSION)${colorReset}"
-    echo -e "${colorDim}For issues and feedback: https://github.com/yourusername/skylab${colorReset}"
-    echo -e "\n"
-}
-
-###############################################################################
-# Main                                                                        #
-###############################################################################
-
-#Usage
-usage() {
-    cat <<-EOF
-		Usage: homelab-setup.sh [options]
-		Valid options are:
-		    -h                      Show this help message and exit
-	EOF
-    exit "$1"
-}
-
-while getopts ":h" arg; do
-    case "$arg" in
-    h)
-        usage 0
-        ;;
-    *)
-        usage 1
-        ;;
-    esac
-done
-# Pre-flight permission and environment checks
-Show 2 "Performing pre-flight checks..."
-
-# Check if we can write to common system directories
-if [[ ! -w "/tmp" ]]; then
-    Show 1 "Cannot write to /tmp directory. Please check permissions."
-    exit 1
-fi
-
-# Test sudo functionality if not root
-if [[ $EUID -ne 0 ]]; then
-    if ! ${sudo_cmd} true 2>/dev/null; then
-        Show 1 "Sudo authentication failed. Please ensure you have sudo privileges."
-        exit 1
+# Handle command line arguments
+if [[ $# -gt 0 ]]; then
+    if [[ "$1" == "test" ]]; then
+        test_installation
+        exit $?
+    elif [[ "$1" == "--debug" ]]; then
+        DEBUG=true
+        shift
     fi
 fi
 
-# Check if running in a supported shell
-if [[ -z "$BASH_VERSION" ]]; then
-    Show 1 "This script requires Bash. Please run with: bash $0"
-    exit 1
-fi
-
-Show 0 "Pre-flight checks completed successfully."
-
-# Initialize enhanced logging system
-Init_Logging
-Show 0 "Logging system initialized. Log file: $LOG_FILE"
-
-# Validate environment and system prerequisites
-Show 2 "Running enhanced system validation..."
-Validate_Environment
-if ! Validate_System_Prerequisites; then
-    Show 1 "System validation failed. Please resolve the issues above before continuing."
-    exit 1
-fi
-
-# Perform initial health check
-if ! Perform_Health_Check; then
-    Show 3 "System health check detected issues. Continuing with installation but monitor system resources."
-fi
-
-# Main execution flow with interactive progress
-echo -e "${GREEN_LINE}"
-echo -e " ${GREEN_BULLET} Starting $SCRIPT_NAME System Setup..."
-echo -e "${GREEN_LINE}"
-
-# Step 1: Get Download URL Domain
-Step_Header 1 "Configuring Download Sources"
-Show_Progress 1 $TOTAL_STEPS "Configuring Download Sources" 0 1 "" true
-Get_Download_Url_Domain
-Show_Progress 1 $TOTAL_STEPS "Download Sources Configured" 0 1 "" true
-
-# Step 2: Check Architecture
-Step_Header 2 "Validating System Architecture"
-Show_Progress 2 $TOTAL_STEPS "Validating System Architecture" 0 1 "" true
-Check_Arch
-Show_Progress 2 $TOTAL_STEPS "System Architecture Validated" 0 1 "" true
-
-# Step 3: Check OS and Distribution
-Step_Header 3 "Detecting Operating System"
-Show_Progress 3 $TOTAL_STEPS "Detecting Operating System" 0 1 "" true
-Check_OS
-Check_Distribution
-
-# Step 4: Check System Requirements
-Step_Header 4 "Verifying System Requirements"
-Show 4 "Checking memory requirements..."
-Check_Memory
-Show 4 "Checking disk space requirements..."
-Check_Disk
-
-# Step 5: Update Package Lists
-Step_Header 5 "Updating Package Repositories"
-Update_Package_Resource
-
-# Enhanced Installation with App Progress Tracking
-APPS_TO_INSTALL=("Dependencies" "Docker" "System-Config" "Rclone" "LazyDocker" "Watchtower" "Filebrowser" "AdGuard" "Homepage")
-TOTAL_APPS=${#APPS_TO_INSTALL[@]}
-
-# Step 6: Install Dependencies
-Step_Header 6 "Installing System Dependencies"
-Show_App_Progress "System Dependencies" 1 $TOTAL_APPS "installing"
-Install_Depends
-Check_Dependency_Installation
-Show_App_Progress "System Dependencies" 1 $TOTAL_APPS "success"
-
-# Step 7: Install Docker
-Step_Header 7 "Installing Docker Engine"
-Show_App_Progress "Docker Engine" 2 $TOTAL_APPS "installing"
-Check_Docker_Install
-Show_App_Progress "Docker Engine" 2 $TOTAL_APPS "success"
-
-# Step 8: Configuration Addons
-Step_Header 8 "Configuring System Addons"
-Show_App_Progress "System Configuration" 3 $TOTAL_APPS "installing"
-Configuration_Addons
-Show_App_Progress "System Configuration" 3 $TOTAL_APPS "success"
-
-# Step 9: Install Rclone
-Step_Header 9 "Installing Rclone Cloud Storage"
-Show_App_Progress "Rclone" 4 $TOTAL_APPS "installing"
-if Install_Rclone; then
-  Show_App_Progress "Rclone" 4 $TOTAL_APPS "success"
-else
-  Show_App_Progress "Rclone" 4 $TOTAL_APPS "failed"
-  Show 3 "Rclone installation failed, but continuing with other components..."
-fi
-
-# Step 10: Install LazyDocker
-Step_Header 10 "Installing LazyDocker Management UI"
-Show_App_Progress "LazyDocker" 5 $TOTAL_APPS "installing"
-Install_LazyDocker
-Show_App_Progress "LazyDocker" 5 $TOTAL_APPS "success"
-
-# Step 11: Install Watchtower
-Step_Header 11 "Installing Watchtower Auto-Updater"
-Show_App_Progress "Watchtower" 6 $TOTAL_APPS "installing"
-Install_Watchtower
-Show_App_Progress "Watchtower" 6 $TOTAL_APPS "success"
-
-# Step 12: Install Filebrowser
-Step_Header 12 "Installing Filebrowser Web File Manager"
-Show_App_Progress "Filebrowser" 7 $TOTAL_APPS "installing"
-Install_Filebrowser
-Show_App_Progress "Filebrowser" 7 $TOTAL_APPS "success"
-
-# Step 13: Install AdGuard Home
-Step_Header 13 "Installing AdGuard Home (DNS Ad Blocker)"
-Show_App_Progress "AdGuard Home" 8 $TOTAL_APPS "installing"
-Install_AdGuard
-Show_App_Progress "AdGuard Home" 8 $TOTAL_APPS "success"
-
-# Step 14: Install SkyLab Homepage
-Step_Header 14 "Installing SkyLab Homepage Dashboard"
-Show_App_Progress "Homepage Dashboard" 9 $TOTAL_APPS "installing"
-Install_Homepage
-Show_App_Progress "Homepage Dashboard" 9 $TOTAL_APPS "success"
-
-# Step 15: Final System Health Check
-Step_Header 15 "Performing Final System Health Check"
-Show 4 "Running post-installation health check..."
-if Perform_Health_Check; then
-    Show 0 "✅ All systems operational and healthy!"
-else
-    Show 3 "⚠️  Some health check warnings detected. System is functional but may need attention."
-fi
-
-# Log installation summary
-Log_Message "INFO" "SkyLab installation completed successfully"
-Log_Message "INFO" "Installation log saved to: $LOG_FILE"
-Show 0 "Installation completed! Check $LOG_FILE for detailed logs."
-
-# Final Step: Show Completion Banner
-Completion_Banner
+# Run main function
+main "$@"
